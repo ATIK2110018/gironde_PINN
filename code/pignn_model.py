@@ -73,22 +73,21 @@ def load_friction_xyz(filepath, node_coords):
     val_interp = griddata((xyz_x, xyz_y), xyz_val, (node_coords[:, 0], node_coords[:, 1]), method='nearest')
     return torch.tensor(val_interp, dtype=torch.float32)
 
-def load_boundary_pli(filepath, node_coords):
-    """Finds the mesh nodes closest to the polyline defined in a .pli file"""
+def load_boundary_pli(filepath, node_coords, threshold=100.0):
+    """Finds all nodes along the line segments of a polyline."""
     with open(filepath, 'r') as f:
         lines = f.readlines()
-    coords = []
-    for line in lines[2:]:
-        parts = line.strip().split()
-        if len(parts) >= 2:
-            coords.append([float(parts[0]), float(parts[1])])
-    
-    coords = np.array(coords)
+    coords = np.array([[float(p[0]), float(p[1])] for line in lines[2:] if len(p := line.strip().split()) >= 2])
     node_coords_np = node_coords.numpy()
     boundary_nodes = []
-    for pt in coords:
-        dist = np.sqrt(np.sum((node_coords_np - pt)**2, axis=1))
-        boundary_nodes.append(np.argmin(dist))
+    for i in range(len(coords)-1):
+        p1, p2 = coords[i], coords[i+1]
+        l2 = np.sum((p2 - p1)**2)
+        if l2 == 0: continue
+        t = np.clip(np.sum((node_coords_np - p1) * (p2 - p1), axis=1) / l2, 0, 1)
+        projection = p1 + t[:, np.newaxis] * (p2 - p1)
+        dist = np.sqrt(np.sum((node_coords_np - projection)**2, axis=1))
+        boundary_nodes.extend(np.where(dist < threshold)[0])
     return list(set(boundary_nodes))
 
 def load_boundary_bc(filepath):
