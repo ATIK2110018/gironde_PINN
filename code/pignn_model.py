@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
-from torch_scatter import scatter_add
 import netCDF4 as nc
 import numpy as np
 import math
@@ -135,14 +134,21 @@ def physics_loss_swe(state_t, state_t_next, edge_index, edge_attr, dt=1.0, g=9.8
     weight_x = dx / (dist ** 2 + 1e-8)
     weight_y = dy / (dist ** 2 + 1e-8)
     
-    grad_eta_x = scatter_add(delta_eta * weight_x, row, dim=0, dim_size=eta_t.size(0))
-    grad_eta_y = scatter_add(delta_eta * weight_y, row, dim=0, dim_size=eta_t.size(0))
-    grad_u_x = scatter_add(delta_u * weight_x, row, dim=0, dim_size=eta_t.size(0))
-    grad_u_y = scatter_add(delta_u * weight_y, row, dim=0, dim_size=eta_t.size(0))
-    grad_v_x = scatter_add(delta_v * weight_x, row, dim=0, dim_size=eta_t.size(0))
-    grad_v_y = scatter_add(delta_v * weight_y, row, dim=0, dim_size=eta_t.size(0))
-    grad_hu_x = scatter_add(delta_hu * weight_x, row, dim=0, dim_size=eta_t.size(0))
-    grad_hv_y = scatter_add(delta_hv * weight_y, row, dim=0, dim_size=eta_t.size(0))
+    num_nodes = eta_t.size(0)
+    
+    # Pure PyTorch alternative to torch-scatter
+    def scatter_add_pt(src, index, dim_size):
+        out = torch.zeros(dim_size, dtype=src.dtype, device=src.device)
+        return out.scatter_add_(0, index, src)
+    
+    grad_eta_x = scatter_add_pt(delta_eta * weight_x, row, num_nodes)
+    grad_eta_y = scatter_add_pt(delta_eta * weight_y, row, num_nodes)
+    grad_u_x = scatter_add_pt(delta_u * weight_x, row, num_nodes)
+    grad_u_y = scatter_add_pt(delta_u * weight_y, row, num_nodes)
+    grad_v_x = scatter_add_pt(delta_v * weight_x, row, num_nodes)
+    grad_v_y = scatter_add_pt(delta_v * weight_y, row, num_nodes)
+    grad_hu_x = scatter_add_pt(delta_hu * weight_x, row, num_nodes)
+    grad_hv_y = scatter_add_pt(delta_hv * weight_y, row, num_nodes)
     
     mass_residual = deta_dt + grad_hu_x + grad_hv_y
     
