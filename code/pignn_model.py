@@ -34,9 +34,17 @@ def extract_graph_from_netcdf(nc_file_path):
     else:
         raise ValueError("Could not find standard node coordinate variables in the NetCDF file.")
 
-    edge_index_list = []
-    edge_attr_list = []
-    
+    # Detect if coordinates are in Lat/Lon degrees
+    is_spherical = (np.max(node_x) < 180.0) and (np.min(node_x) > -180.0)
+    if is_spherical:
+        mean_lat = np.mean(node_y)
+        lat_to_m = 111139.0
+        lon_to_m = 111139.0 * math.cos(math.radians(mean_lat))
+    else:
+        lat_to_m = 1.0
+        lon_to_m = 1.0
+
+    edge_index_list, edge_attr_list = [], []
     for i in range(edge_nodes.shape[1] if edge_nodes.shape[0] == 2 else edge_nodes.shape[0]):
         if edge_nodes.shape[0] == 2:
             n1 = int(edge_nodes[0, i]) - 1
@@ -46,13 +54,13 @@ def extract_graph_from_netcdf(nc_file_path):
             n2 = int(edge_nodes[i, 1]) - 1
             
         if n1 >= 0 and n2 >= 0:
-            edge_index_list.append([n1, n2])
-            edge_index_list.append([n2, n1])
+            edge_index_list.extend([[n1, n2], [n2, n1]])
             dx = node_x[n2] - node_x[n1]
             dy = node_y[n2] - node_y[n1]
-            dist = math.sqrt(dx**2 + dy**2)
-            edge_attr_list.append([dx, dy, dist])
-            edge_attr_list.append([-dx, -dy, dist])
+            dx_m = dx * lon_to_m
+            dy_m = dy * lat_to_m
+            dist_m = math.sqrt(dx_m**2 + dy_m**2)
+            edge_attr_list.extend([[dx_m, dy_m, dist_m], [-dx_m, -dy_m, dist_m]])
             
     edge_index = torch.tensor(edge_index_list, dtype=torch.long).t().contiguous()
     edge_attr = torch.tensor(edge_attr_list, dtype=torch.float32)
@@ -73,8 +81,8 @@ def load_friction_xyz(filepath, node_coords):
     val_interp = griddata((xyz_x, xyz_y), xyz_val, (node_coords[:, 0], node_coords[:, 1]), method='nearest')
     return torch.tensor(val_interp, dtype=torch.float32)
 
-def load_boundary_pli(filepath, node_coords, threshold=100.0):
-    """Finds all nodes along the line segments of a polyline."""
+def load_boundary_pli(filepath, node_coords, threshold=0.002):
+    """Finds all nodes along the line segments of a polyline in Lat/Lon."""
     with open(filepath, 'r') as f:
         lines = f.readlines()
     coords = np.array([[float(p[0]), float(p[1])] for line in lines[2:] if len(p := line.strip().split()) >= 2])
