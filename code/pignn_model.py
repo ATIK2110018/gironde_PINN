@@ -168,17 +168,15 @@ class RiverPIGNN(nn.Module):
 # ==========================================
 # 3. PHYSICS-INFORMED LOSS 
 # ==========================================
-def physics_loss_swe(state_t, state_t_next, edge_index, edge_attr, dt=1.0, g=9.81):
+def physics_loss_swe(state_t, state_t_next, edge_index, edge_attr, dt=60.0, g=9.81):
     eta_t, u_t, v_t, zb, cf = state_t.T
-    h_t = eta_t - zb
+    h_t = torch.clamp(eta_t - zb, min=0.05)
     eta_next, u_next, v_next = state_t_next.T
-    
-    deta_dt = (eta_next - eta_t) / dt
-    du_dt = (u_next - u_t) / dt
-    dv_dt = (v_next - v_t) / dt
+    deta_dt, du_dt, dv_dt = (eta_next - eta_t)/dt, (u_next - u_t)/dt, (v_next - v_t)/dt
     
     row, col = edge_index
     dx, dy, dist = edge_attr.T
+    dist_clamped = torch.clamp(dist, min=1.0)
     
     delta_eta = eta_t[col] - eta_t[row]
     delta_u = u_t[col] - u_t[row]
@@ -186,32 +184,20 @@ def physics_loss_swe(state_t, state_t_next, edge_index, edge_attr, dt=1.0, g=9.8
     delta_hu = (h_t[col] * u_t[col]) - (h_t[row] * u_t[row])
     delta_hv = (h_t[col] * v_t[col]) - (h_t[row] * v_t[row])
     
-    weight_x = dx / (dist ** 2 + 1e-8)
-    weight_y = dy / (dist ** 2 + 1e-8)
-    
+    weight_x, weight_y = dx / (dist_clamped ** 2 + 1e-8), dy / (dist_clamped ** 2 + 1e-8)
     num_nodes = eta_t.size(0)
     
     def scatter_add_pt(src, index, dim_size):
-        out = torch.zeros(dim_size, dtype=src.dtype, device=src.device)
-        return out.scatter_add_(0, index, src)
+        return torch.zeros(dim_size, dtype=src.dtype, device=src.device).scatter_add_(0, index, src)
     
-    grad_eta_x = scatter_add_pt(delta_eta * weight_x, row, num_nodes)
-    grad_eta_y = scatter_add_pt(delta_eta * weight_y, row, num_nodes)
-    grad_u_x = scatter_add_pt(delta_u * weight_x, row, num_nodes)
-    grad_u_y = scatter_add_pt(delta_u * weight_y, row, num_nodes)
-    grad_v_x = scatter_add_pt(delta_v * weight_x, row, num_nodes)
-    grad_v_y = scatter_add_pt(delta_v * weight_y, row, num_nodes)
-    grad_hu_x = scatter_add_pt(delta_hu * weight_x, row, num_nodes)
-    grad_hv_y = scatter_add_pt(delta_hv * weight_y, row, num_nodes)
+    grad_eta_x, grad_eta_y = scatter_add_pt(delta_eta * weight_x, row, num_nodes), scatter_add_pt(delta_eta * weight_y, row, num_nodes)
+    grad_u_x, grad_u_y = scatter_add_pt(delta_u * weight_x, row, num_nodes), scatter_add_pt(delta_u * weight_y, row, num_nodes)
+    grad_v_x, grad_v_y = scatter_add_pt(delta_v * weight_x, row, num_nodes), scatter_add_pt(delta_v * weight_y, row, num_nodes)
+    grad_hu_x, grad_hv_y = scatter_add_pt(delta_hu * weight_x, row, num_nodes), scatter_add_pt(delta_hv * weight_y, row, num_nodes)
     
     mass_residual = deta_dt + grad_hu_x + grad_hv_y
-    
     velocity_magnitude = torch.sqrt(u_t**2 + v_t**2 + 1e-8)
-    friction_x = cf * u_t * velocity_magnitude / (h_t + 1e-8)
-    momentum_x_residual = du_dt + u_t * grad_u_x + v_t * grad_u_y + g * grad_eta_x + friction_x
+    momentum_x_residual = du_dt + u_t * grad_u_x + v_t * grad_u_y + g * grad_eta_x + cf * u_t * velocity_magnitude / h_t
+    momentum_y_residual = dv_dt + u_t * grad_v_x + v_t * grad_v_y + g * grad_eta_y + cf * v_t * velocity_magnitude / h_t
     
-    friction_y = cf * v_t * velocity_magnitude / (h_t + 1e-8)
-    momentum_y_residual = dv_dt + u_t * grad_v_x + v_t * grad_v_y + g * grad_eta_y + friction_y
-    
-    physics_loss = torch.mean(mass_residual**2) + torch.mean(momentum_x_residual**2) + torch.mean(momentum_y_residual**2)
-    return physics_loss
+    return torch.mean(mass_residual**2) + torch.mean(momentum_x_residual**2) + torch.mean(momentum_y_residual**2)
