@@ -7,6 +7,7 @@ import netCDF4 as nc
 import numpy as np
 import math
 from scipy.interpolate import griddata
+from scipy.spatial import cKDTree
 
 # ==========================================
 # 1. GRAPH & DATA EXTRACTION FROM DELFT3D
@@ -114,6 +115,40 @@ def load_boundary_bc(filepath):
                 except ValueError:
                     continue
     return np.array(times), np.array(values)
+
+def load_truth_data(nc_file_path, node_coords):
+    print(f"Loading true state data from {nc_file_path} for data loss...")
+    dataset = nc.Dataset(nc_file_path, 'r')
+    times = dataset.variables['time'][:]
+    
+    eta_raw = dataset.variables['mesh2d_s1'][:]
+    u_raw = dataset.variables['mesh2d_ucx'][:]
+    v_raw = dataset.variables['mesh2d_ucy'][:]
+    
+    # Handle missing/masked values by filling with 0
+    eta_raw = np.ma.filled(eta_raw, fill_value=0.0)
+    u_raw = np.ma.filled(u_raw, fill_value=0.0)
+    v_raw = np.ma.filled(v_raw, fill_value=0.0)
+    
+    if eta_raw.shape[1] == node_coords.shape[0]:
+        print("Truth data maps 1:1 with nodes.")
+        eta_nodes, u_nodes, v_nodes = eta_raw, u_raw, v_raw
+    else:
+        print("Truth data is at faces. Fast interpolating to nodes using KDTree...")
+        face_x = dataset.variables['mesh2d_face_x'][:]
+        face_y = dataset.variables['mesh2d_face_y'][:]
+        face_coords = np.column_stack((face_x, face_y))
+        
+        tree = cKDTree(face_coords)
+        node_coords_np = node_coords.cpu().numpy()
+        _, indices = tree.query(node_coords_np)
+        
+        eta_nodes = eta_raw[:, indices]
+        u_nodes = u_raw[:, indices]
+        v_nodes = v_raw[:, indices]
+        
+    dataset.close()
+    return times, torch.tensor(eta_nodes, dtype=torch.float32), torch.tensor(u_nodes, dtype=torch.float32), torch.tensor(v_nodes, dtype=torch.float32)
 
 # ==========================================
 # 2. GRAPH NEURAL NETWORK ARCHITECTURE
