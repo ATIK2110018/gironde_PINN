@@ -1,0 +1,18 @@
+
+[boundary]
+quantity=dischargebnd
+locationFile=dordogne.pli
+forcingFile=dordogne.bc
+returnTime=0.0000000e+000
+
+[boundary]
+quantity=dischargebnd
+locationFile=garonne.pli
+forcingFile=garonne.bc
+returnTime=0.0000000e+000
+
+[boundary]
+quantity=waterlevelbnd
+locationFile=port block.pli
+forcingFile=WaterLevel.bc
+returnTime=0.0000000e+000
