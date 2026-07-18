@@ -17,10 +17,18 @@ def extract_graph_from_netcdf(nc_file_path):
         node_x = dataset.variables['mesh2d_node_x'][:]
         node_y = dataset.variables['mesh2d_node_y'][:]
         edge_nodes = dataset.variables['mesh2d_edge_nodes'][:]
+        if 'mesh2d_node_z' in dataset.variables:
+            node_z = dataset.variables['mesh2d_node_z'][:]
+        else:
+            node_z = np.zeros_like(node_x)
     elif 'NetNode_x' in dataset.variables:
         node_x = dataset.variables['NetNode_x'][:]
         node_y = dataset.variables['NetNode_y'][:]
         edge_nodes = dataset.variables['NetLink'][:]
+        if 'NetNode_z' in dataset.variables:
+            node_z = dataset.variables['NetNode_z'][:]
+        else:
+            node_z = np.zeros_like(node_x)
     else:
         raise ValueError("Could not find standard node coordinate variables in the NetCDF file.")
 
@@ -48,9 +56,10 @@ def extract_graph_from_netcdf(nc_file_path):
     edge_index = torch.tensor(edge_index_list, dtype=torch.long).t().contiguous()
     edge_attr = torch.tensor(edge_attr_list, dtype=torch.float32)
     node_coords = torch.tensor(np.column_stack((node_x, node_y)), dtype=torch.float32)
+    node_z = torch.tensor(node_z, dtype=torch.float32)
     
     dataset.close()
-    return node_coords, edge_index, edge_attr
+    return node_coords, edge_index, edge_attr, node_z
 
 # ==========================================
 # 2. GRAPH NEURAL NETWORK ARCHITECTURE
