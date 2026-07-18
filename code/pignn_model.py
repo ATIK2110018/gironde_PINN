@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,11 +6,13 @@ from torch_geometric.nn import MessagePassing
 import netCDF4 as nc
 import numpy as np
 import math
+from scipy.interpolate import griddata
 
 # ==========================================
-# 1. GRAPH EXTRACTION FROM DELFT3D FM
+# 1. GRAPH & DATA EXTRACTION FROM DELFT3D
 # ==========================================
 def extract_graph_from_netcdf(nc_file_path):
+    print(f"Reading mesh from {nc_file_path}...")
     dataset = nc.Dataset(nc_file_path, 'r')
     
     if 'mesh2d_node_x' in dataset.variables:
@@ -45,7 +48,6 @@ def extract_graph_from_netcdf(nc_file_path):
         if n1 >= 0 and n2 >= 0:
             edge_index_list.append([n1, n2])
             edge_index_list.append([n2, n1])
-            
             dx = node_x[n2] - node_x[n1]
             dy = node_y[n2] - node_y[n1]
             dist = math.sqrt(dx**2 + dy**2)
@@ -59,6 +61,52 @@ def extract_graph_from_netcdf(nc_file_path):
     
     dataset.close()
     return node_coords, edge_index, edge_attr, node_z
+
+def load_friction_xyz(filepath, node_coords):
+    print(f"Loading friction from {filepath}...")
+    data = np.loadtxt(filepath)
+    xyz_x = data[:, 0]
+    xyz_y = data[:, 1]
+    xyz_val = data[:, 2]
+    
+    # Interpolate scatter .xyz to the unstructured mesh nodes
+    val_interp = griddata((xyz_x, xyz_y), xyz_val, (node_coords[:, 0], node_coords[:, 1]), method='nearest')
+    return torch.tensor(val_interp, dtype=torch.float32)
+
+def load_boundary_pli(filepath, node_coords):
+    """Finds the mesh nodes closest to the polyline defined in a .pli file"""
+    with open(filepath, 'r') as f:
+        lines = f.readlines()
+    coords = []
+    for line in lines[2:]:
+        parts = line.strip().split()
+        if len(parts) >= 2:
+            coords.append([float(parts[0]), float(parts[1])])
+    
+    coords = np.array(coords)
+    node_coords_np = node_coords.numpy()
+    boundary_nodes = []
+    for pt in coords:
+        dist = np.sqrt(np.sum((node_coords_np - pt)**2, axis=1))
+        boundary_nodes.append(np.argmin(dist))
+    return list(set(boundary_nodes))
+
+def load_boundary_bc(filepath):
+    """Parses a .bc file for time series forcing data"""
+    times = []
+    values = []
+    with open(filepath, 'r') as f:
+        for line in f:
+            parts = line.strip().split()
+            if len(parts) == 2:
+                try:
+                    t = float(parts[0])
+                    v = float(parts[1])
+                    times.append(t)
+                    values.append(v)
+                except ValueError:
+                    continue
+    return np.array(times), np.array(values)
 
 # ==========================================
 # 2. GRAPH NEURAL NETWORK ARCHITECTURE
@@ -107,6 +155,7 @@ class RiverPIGNN(nn.Module):
         h = F.relu(self.mpnn2(h, edge_index, edge_attr))
         h = self.mpnn3(h, edge_index, edge_attr)
         out = self.decoder(h)
+        # Residual predicts change in [eta, u, v]
         return out + x[:, :3]
 
 # ==========================================
@@ -115,7 +164,6 @@ class RiverPIGNN(nn.Module):
 def physics_loss_swe(state_t, state_t_next, edge_index, edge_attr, dt=1.0, g=9.81):
     eta_t, u_t, v_t, zb, cf = state_t.T
     h_t = eta_t - zb
-    
     eta_next, u_next, v_next = state_t_next.T
     
     deta_dt = (eta_next - eta_t) / dt
@@ -136,7 +184,6 @@ def physics_loss_swe(state_t, state_t_next, edge_index, edge_attr, dt=1.0, g=9.8
     
     num_nodes = eta_t.size(0)
     
-    # Pure PyTorch alternative to torch-scatter
     def scatter_add_pt(src, index, dim_size):
         out = torch.zeros(dim_size, dtype=src.dtype, device=src.device)
         return out.scatter_add_(0, index, src)
