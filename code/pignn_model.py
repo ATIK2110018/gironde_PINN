@@ -159,11 +159,23 @@ class RiverPIGNN(nn.Module):
     def forward(self, x, edge_index, edge_attr):
         h = F.relu(self.encoder(x))
         h = F.relu(self.mpnn1(h, edge_index, edge_attr))
-        h = F.relu(self.mpnn2(h, edge_index, edge_attr))
-        h = self.mpnn3(h, edge_index, edge_attr)
-        out = self.decoder(h)
-        # Residual predicts change in [eta, u, v]
-        return out + x[:, :3]
+        h = self.mpnn2(h, edge_index, edge_attr)
+        delta = self.decoder(h)
+        
+        delta_eta = torch.clamp(delta[:, 0], min=-0.5, max=0.5)
+        delta_u = torch.clamp(delta[:, 1], min=-0.5, max=0.5)
+        delta_v = torch.clamp(delta[:, 2], min=-0.5, max=0.5)
+        
+        out_eta = x[:, 0] + delta_eta
+        out_u = x[:, 1] + delta_u
+        out_v = x[:, 2] + delta_v
+        
+        zb = x[:, 3]
+        out_eta = torch.clamp(out_eta, min=zb + 0.05, max=zb + 25.0)
+        out_u = torch.clamp(out_u, min=-10.0, max=10.0)
+        out_v = torch.clamp(out_v, min=-10.0, max=10.0)
+        
+        return torch.stack([out_eta, out_u, out_v], dim=1)
 
 # ==========================================
 # 3. PHYSICS-INFORMED LOSS 
