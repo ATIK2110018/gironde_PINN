@@ -78,8 +78,7 @@ if __name__ == "__main__":
         
         h_current = torch.tensor(true_wl_matrix[0], dtype=torch.float32, device=device).unsqueeze(1) - cell_z.unsqueeze(1)
         h_current = torch.clamp(h_current, min=0.01)
-        u_current = torch.zeros_like(h_current)
-        v_current = torch.zeros_like(h_current)
+        latent_current = torch.zeros((h_current.size(0), model.hidden_dim), device=device)
         
         pred_wl_matrix = []
         
@@ -96,7 +95,7 @@ if __name__ == "__main__":
                     h_current = torch.where(boundary_mask.unsqueeze(1), true_h_next, h_current)
                 
                 # Mathematical Step Forward (t -> t+1)
-                h_current, u_current, v_current = model(h_current, u_current, v_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
+                h_current, latent_current = model(h_current, latent_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
                 
         pred_wl_matrix = np.array(pred_wl_matrix)
         

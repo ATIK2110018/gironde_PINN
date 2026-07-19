@@ -44,10 +44,9 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         h_current = torch.tensor(true_wl_matrix[start_idx], dtype=torch.float32, device=device).unsqueeze(1) - cell_z.unsqueeze(1)
         h_current = torch.clamp(h_current, min=0.01)
         
-        # We don't have true velocity data, so we let the network initialize it to 0. 
-        # (The GNN will naturally spin up the velocity fields within the first step).
-        u_current = torch.zeros_like(h_current)
-        v_current = torch.zeros_like(h_current)
+        # We don't have true velocity data, so we let the network initialize its latent state to 0. 
+        # (The GNN will naturally spin up the latent fields within the first step).
+        latent_current = torch.zeros((h_current.size(0), model.hidden_dim), device=device)
         
         total_loss = 0
         
@@ -61,7 +60,7 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
             h_current = torch.where(boundary_mask.unsqueeze(1), true_h_next, h_current)
             
             # 3. MATHEMATICALLY STEP FORWARD IN TIME (t -> t+1)
-            h_next, u_next, v_next = model(h_current, u_current, v_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
+            h_next, latent_next = model(h_current, latent_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
             
             # 4. MEASURE SOLVER ACCURACY ON THE INTERIOR
             loss = F.mse_loss(h_next[interior_indices], true_h_next[interior_indices])
@@ -69,8 +68,7 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
             
             # Update state for next step
             h_current = h_next
-            u_current = u_next
-            v_current = v_next
+            latent_current = latent_next
             
         total_loss = total_loss / rollout_steps
         total_loss.backward()
