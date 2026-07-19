@@ -67,7 +67,10 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         # (The GNN will naturally spin up the latent fields within the first step).
         latent_current = torch.zeros((h_current.size(0), model.hidden_dim), device=device)
         
-        total_loss = 0
+        # Dense Trajectory Supervision
+        # Accumulating the loss at every single step prevents the vanishing gradient problem
+        # over the 60-step rollout, violently forcing the AI to match the wave's exact physical trajectory.
+        loss_trajectory = 0.0
         
         for step in range(rollout_steps):
             # 2. ENFORCE HARD BOUNDARY CONDITIONS (Exactly like a numerical solver)
@@ -89,13 +92,13 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
                                     true_h_next[interior_indices] - h_current[interior_indices])
             
             loss = state_loss + 2.0 * deriv_loss
-            total_loss += loss
+            loss_trajectory += loss
             
             # Update state for next step
             h_current = h_next
             latent_current = latent_next
             
-        total_loss = total_loss / rollout_steps
+        total_loss = loss_trajectory / rollout_steps
         total_loss.backward()
         
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
