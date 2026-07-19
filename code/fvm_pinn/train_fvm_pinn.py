@@ -28,7 +28,8 @@ def main():
     print(f"Starting FVM-PINN Training on {device}")
     
     print("Extracting FVM Geometry...")
-    cell_coords_t, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, topo_boundary_mask = extract_fvm_geometry("/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc", device=device)
+    nc_file = '/kaggle/working/gironde_PINN/data/input/FlowFM_net.nc'
+    cell_coords_t, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, topo_boundary_mask = extract_fvm_geometry(nc_file, device=device)
     cell_coords = cell_coords_t.cpu().numpy()
     
     import netCDF4 as nc
@@ -158,17 +159,11 @@ def main():
         epoch_phys = 0.0
         
         # 1. Train heavily on the new 1-minute time front
-        for _ in range(5): # Reduced from 15 to 5 since 1-minute steps are very close together
+        for _ in range(5):
             d_loss, p_loss = trainer.train_step(t_idx)
             epoch_data += d_loss
             epoch_phys += p_loss
             
-        # 2. Replay Memory: Sample past time steps to prevent Catastrophic Forgetting
-        if t_idx > 0:
-            past_indices = np.random.choice(range(t_idx), size=min(t_idx, 3), replace=False)
-            for past_idx in past_indices:
-                trainer.train_step(past_idx)
-                
         epoch_data /= 5
         epoch_phys /= 5
         
