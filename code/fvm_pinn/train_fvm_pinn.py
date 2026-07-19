@@ -128,31 +128,37 @@ def main():
     # TRAIN PINN
     # ==========================================
     
-    epochs = 1000  # Increased epochs since each epoch is very fast (10 random steps)
+    epochs = 2500  # Increased epochs since we are using Fourier Features & deeper network
     loss_history_data = []
     loss_history_phys = []
     
-    print(f"Starting Training for {epochs} Epochs...")
+    print(f"Starting Training for {epochs} Epochs with Curriculum Time-Windowing...")
     
     for epoch in range(epochs):
         epoch_data_loss = 0.0
         epoch_phys_loss = 0.0
         
-        sampled_t_indices = np.random.choice(range(len(times_seconds)-1), size=10, replace=False)
+        # Curriculum Learning: Slowly expand the time window the NN is allowed to see.
+        # It must learn the first few hours perfectly before we let it see the rest of the tide.
+        # This preserves Causality!
+        progress = epoch / (epochs * 0.8) # Full window reached at 80% of training
+        max_t_idx = min(len(times_seconds)-1, max(20, int(len(times_seconds) * progress)))
+        
+        sampled_t_indices = np.random.choice(range(max_t_idx), size=20, replace=False)
         
         for t_idx in sampled_t_indices:
             d_loss, p_loss = trainer.train_step(t_idx)
             epoch_data_loss += d_loss
             epoch_phys_loss += p_loss
             
-        epoch_data_loss /= 10
-        epoch_phys_loss /= 10
+        epoch_data_loss /= 20
+        epoch_phys_loss /= 20
         
         loss_history_data.append(epoch_data_loss)
         loss_history_phys.append(epoch_phys_loss)
         
         if epoch % 100 == 0:
-            print(f"Epoch {epoch}/{epochs} | Data Loss: {epoch_data_loss:.4f} | FVM Physics Loss: {epoch_phys_loss:.4f}")
+            print(f"Epoch {epoch}/{epochs} | Window: 0 to {max_t_idx}/{len(times_seconds)} | Data Loss: {epoch_data_loss:.4f} | FVM Physics Loss: {epoch_phys_loss:.4f}")
             
     # Save the trained model
     torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')
