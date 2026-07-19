@@ -3,13 +3,25 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
+def get_cells_near_line(cell_coords, p1, p2, threshold=0.005):
+    l2 = np.sum((p2 - p1)**2)
+    if l2 == 0: return np.zeros(cell_coords.shape[0], dtype=bool)
+    
+    t = np.sum((cell_coords - p1) * (p2 - p1), axis=1) / l2
+    t = np.clip(t, 0.0, 1.0)
+    
+    projection = p1 + t[:, np.newaxis] * (p2 - p1)
+    dist = np.sqrt(np.sum((cell_coords - projection)**2, axis=1))
+    return dist < threshold
+
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     print(f"Running on {device}")
     
     from data_extractor import extract_fvm_geometry
     print("Extracting FVM Geometry from /kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc...")
-    cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths = extract_fvm_geometry("/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc", device=device)
+    cell_coords_t, cell_z, cell_areas, edge_index, edge_normals, edge_lengths = extract_fvm_geometry("/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc", device=device)
+    cell_coords = cell_coords_t.cpu().numpy()
     
     import netCDF4 as nc
     ds = nc.Dataset("/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc")
@@ -17,47 +29,51 @@ def main():
     times_seconds = ds.variables['time'][:]
     ds.close()
     
-    # Define Boundary Nodes (Ocean is at the West end of the Gironde Estuary, i.e., minimum Longitude X)
-    x_coords = cell_coords[:, 0]
-    x_min = torch.min(x_coords)
-    # Select cells within a small margin of the western-most edge as the tidal boundary (0.005 degrees ~ 400m thick)
-    boundary_mask = (x_coords < x_min + 0.005)
+    # EXACT BOUNDARIES from the .pli files
+    # 1. Ocean Boundary (Port Block)
+    p1_port = np.array([-1.055107109535667E+000, 4.558144911918696E+001])
+    p2_port = np.array([-1.043691864509240E+000, 4.559334500610923E+001])
+    port_mask = get_cells_near_line(cell_coords, p1_port, p2_port, threshold=0.005)
     
-    print(f"Identified {torch.sum(boundary_mask).item()} boundary cells at the ocean mouth.")
+    # 2. Garonne River Inflow
+    p1_gar = np.array([-5.308167329151710E-001, 4.480884916128741E+001])
+    p2_gar = np.array([-5.262550852925010E-001, 4.481051805675912E+001])
+    gar_mask = get_cells_near_line(cell_coords, p1_gar, p2_gar, threshold=0.005)
     
-    # We use the true data ONLY to extract the initial condition and the tidal forcing at the boundary!
+    # 3. Dordogne River Inflow
+    p1_dor = np.array([-2.586704969143130E-001, 4.491934439849670E+001])
+    p2_dor = np.array([-2.586418807368147E-001, 4.491740422166230E+001])
+    dor_mask = get_cells_near_line(cell_coords, p1_dor, p2_dor, threshold=0.005)
+    
+    exact_boundary_mask = port_mask | gar_mask | dor_mask
+    boundary_mask_t = torch.tensor(exact_boundary_mask, device=device)
+    
+    print(f"Identified EXACT boundary cells: {np.sum(port_mask)} Ocean, {np.sum(gar_mask)} Garonne, {np.sum(dor_mask)} Dordogne.")
+    
     initial_wl = true_wl_matrix[0, :]
     
-    # Extract boundary tidal forcing across time
-    # Average the tidal forcing at the boundary mask to create a single tidal wave time-series
-    boundary_wl_matrix = np.mean(true_wl_matrix[:, boundary_mask.cpu().numpy()], axis=1)
+    # Extract exact boundary forcing for EACH boundary cell individually! (Shape: 265, K)
+    boundary_wl_matrix = true_wl_matrix[:, exact_boundary_mask]
     
-    # ==========================================
-    # GPU Explicit FVM Simulation (No Neural Networks!)
-    # ==========================================
     from numerical_model import GPUHydrodynamicModel
     
     model = GPUHydrodynamicModel(
-        cell_coords=cell_coords.cpu().numpy(),
+        cell_coords=cell_coords,
         cell_areas=cell_areas.squeeze(1).cpu().numpy(),
         cell_z=cell_z.cpu().numpy(),
         edge_index=edge_index.cpu().numpy(),
         edge_normals=edge_normals.cpu().numpy(),
         edge_lengths=edge_lengths.squeeze(1).cpu().numpy(),
-        boundary_mask=boundary_mask,
+        boundary_mask=boundary_mask_t,
         device=device
     )
     
-    # Run the pure mathematical solver forward in time!
     pred_wl_matrix = model.simulate(
         initial_wl=initial_wl,
         boundary_wl_matrix=boundary_wl_matrix,
         times_seconds=times_seconds
     )
     
-    # ==========================================
-    # Plotting
-    # ==========================================
     os.makedirs('/kaggle/working/outputs', exist_ok=True)
     
     node_id = 5000
