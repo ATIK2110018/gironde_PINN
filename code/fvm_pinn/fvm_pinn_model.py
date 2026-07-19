@@ -127,8 +127,9 @@ class FVMPINNTrainer:
         phys_loss = self.compute_physics_loss(t_val, dt=1.0)
         
         # 3. Step Optimizer
-        # Give physics a strong weight so the wave dynamics obey gravity
-        total_loss = data_loss + 10.0 * phys_loss
+        # The Physics Loss must be strictly enforced so the network doesn't ignore the Shallow Water Equations.
+        # Since Data Loss is ~100, we scale Physics Loss by 100 to balance the gradient tug-of-war!
+        total_loss = data_loss + 100.0 * phys_loss
         total_loss.backward()
         
         # Gradient clipping stabilizes stiff FVM gradients
