@@ -66,8 +66,9 @@ class NeuralFVMSolver(nn.Module):
         edge_features = torch.cat([h_L, h_R, z_L, z_R, dwl, dz, e_len, nx, ny, lat_L, lat_R], dim=1)
         
         # The network predicts the physical momentum for the 1-hour window.
-        # Max velocity in Gironde is around 3.0 m/s
-        u_perp = torch.tanh(self.edge_net(edge_features)) * 3.0 
+        # To strictly satisfy the CFL stability condition for tiny 10m coastal cells during the 60s micro-steps,
+        # we strictly bound the learned effective velocity to +/- 0.1 m/s.
+        u_perp = torch.tanh(self.edge_net(edge_features)) * 0.1 
         
         # Create anti-symmetric messages for node latent updates
         num_cells = h.size(0)
@@ -104,9 +105,11 @@ class NeuralFVMSolver(nn.Module):
             flux_mass = h_Roe * u_perp
             flux_mass_total = flux_mass.view(-1, 1) * e_len_col
             
-            # Sum fluxes into cells
+            # STRICT MASS CONSERVATION (Anti-symmetric flux)
+            # What leaves one cell MUST enter the neighbor!
             net_flux_mass = torch.zeros((num_cells, 1), device=h.device)
             net_flux_mass.scatter_add_(0, c_L.view(-1, 1), flux_mass_total)
+            net_flux_mass.scatter_add_(0, c_R.view(-1, 1), -flux_mass_total)
             
             div_mass = net_flux_mass / c_area
             
