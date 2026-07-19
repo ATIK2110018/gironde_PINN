@@ -1,29 +1,46 @@
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import numpy as np
+from numerical_model import GPUHydrodynamicModel
+
+class FourierFeatures(nn.Module):
+    """
+    Random Fourier Feature Mapping (Positional Encoding)
+    Shatters the Spectral Bias so the network can learn high-frequency tidal waves.
+    """
+    def __init__(self, in_features=3, out_features=128, sigma=2.0):
+        super().__init__()
+        self.out_features = out_features
+        # Fixed random matrix for projection
+        self.B = nn.Parameter(torch.randn(in_features, out_features // 2) * sigma, requires_grad=False)
+        
+    def forward(self, x):
+        x_proj = 2.0 * np.pi * x @ self.B
+        return torch.cat([torch.sin(x_proj), torch.cos(x_proj)], dim=-1)
 
 class HydroPINN(nn.Module):
-    def __init__(self, layers=[3, 128, 128, 128, 128, 3]):
-        super().__init__()
-        # Input: (t, x, y) -> Output: (h, u, v)
-        net = []
-        for i in range(len(layers)-2):
-            net.append(nn.Linear(layers[i], layers[i+1]))
-            net.append(nn.Tanh())
-        net.append(nn.Linear(layers[-2], layers[-1]))
-        self.net = nn.Sequential(*net)
+    """
+    Neural Network predicting state (h, u, v) from (t, x, y)
+    Uses Fourier Features to capture complex tidal cycles over 265 hours.
+    """
+    def __init__(self):
+        super(HydroPINN, self).__init__()
+        
+        self.fourier = FourierFeatures(in_features=3, out_features=128, sigma=2.0)
+        
+        self.net = nn.Sequential(
+            nn.Linear(128, 256),
+            nn.GELU(),
+            nn.Linear(256, 256),
+            nn.GELU(),
+            nn.Linear(256, 256),
+            nn.GELU(),
+            nn.Linear(256, 256),
+            nn.GELU(),
+            nn.Linear(256, 3) # outputs h, u, v
+        )
         
     def forward(self, t, coords):
-        # coords: (N, 2), t: (1, 1) or scalar
-        if t.dim() == 0 or t.size(0) == 1:
-            t = t.expand(coords.shape[0], 1)
-            
-        inputs = torch.cat([t, coords], dim=1)
-        out = self.net(inputs)
-        
-        # We output (h, u, v)
-        # We can add a softplus to h to guarantee positivity, but keeping it linear allows the network to explore freely
         t_expanded = t.expand(coords.size(0), 1)
         inputs = torch.cat([t_expanded, coords], dim=1)
         features = self.fourier(inputs)
