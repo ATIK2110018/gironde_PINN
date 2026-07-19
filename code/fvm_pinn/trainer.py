@@ -1,5 +1,5 @@
 import torch
-from .loss import compute_fvm_physics_loss, compute_data_loss
+from loss import compute_fvm_physics_loss, compute_data_loss
 import numpy as np
 
 def train_fvm_pinn(model, cell_coords, cell_z, edge_index, edge_normals, times_hr, true_wl_matrix, epochs=5000, lr=1e-3, device='cpu'):

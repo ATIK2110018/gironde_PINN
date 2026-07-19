@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from .riemann_solver import roe_flux_2d
+from riemann_solver import roe_flux_2d
 
 def compute_fvm_physics_loss(model, cell_coords, cell_z, edge_index, edge_normals, t_batch, g=9.81):
     """
