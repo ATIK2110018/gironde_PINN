@@ -124,7 +124,7 @@ class GPUHydrodynamicModel:
                 else:
                     bc_wl = boundary_wl_matrix[-1]
                 
-                bc_wl_tensor = torch.tensor(bc_wl, dtype=torch.float32, device=self.device).unsqueeze(1)
+                bc_wl_tensor = torch.tensor(bc_wl, dtype=torch.float32, device=self.device)
                 bc_h = torch.clamp(bc_wl_tensor - self.cell_z[self.boundary_mask], min=0.01)
                 
                 # Force boundary water levels
