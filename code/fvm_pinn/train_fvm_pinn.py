@@ -80,7 +80,7 @@ def main():
     
     # 2. Instantiate the FVM-PINN Trainer
     trainer = FVMPINNTrainer(
-        fvm_model=fvm_model,
+        fvm_engine=fvm_model,
         cell_coords_m=torch.tensor(cell_coords_m, dtype=torch.float32, device=device),
         true_wl_matrix=true_wl_matrix,
         times_seconds=times_seconds,
