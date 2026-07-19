@@ -2,9 +2,9 @@ import torch
 from loss import compute_fvm_physics_loss, compute_data_loss
 import numpy as np
 
-def train_fvm_pinn(model, cell_coords, cell_z, edge_index, edge_normals, times_hr, true_wl_matrix, epochs=5000, lr=1e-3, device='cpu'):
+def train_fvm_pinn(model, cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, cell_friction, times_hr, true_wl_matrix, epochs=5000, lr=1e-3, device='cpu'):
     """
-    The training loop for FVM_PINN.
+    The training loop for exact FVM_PINN.
     Uses the "Teacher Strategy" recommended by HydroNet for complex rivers.
     """
     model.to(device)
@@ -16,7 +16,7 @@ def train_fvm_pinn(model, cell_coords, cell_z, edge_index, edge_normals, times_h
     y_np = cell_coords[:, 1].cpu().numpy()
     model.set_scales(x_np.min(), x_np.max(), y_np.min(), y_np.max(), times_hr[0]*3600, times_hr[-1]*3600)
     
-    print("Starting FVM-PINN Training (Teacher Strategy)...")
+    print("Starting exact FVM-PINN Training (Teacher Strategy)...")
     
     # Physics is heavily regularized, but guided by Teacher data to avoid flat water collapse
     lambda_fvm = 1.0
@@ -34,9 +34,9 @@ def train_fvm_pinn(model, cell_coords, cell_z, edge_index, edge_normals, times_h
         true_wl_at_t = torch.tensor(true_wl_matrix[t_idx], dtype=torch.float32, device=device)
         loss_data = compute_data_loss(model, cell_coords, true_wl_at_t, None, None, t_scalar)
         
-        # 3. Compute Physics Loss (Roe Riemann Solver Fluxes + Autograd dt)
+        # 3. Compute Exact Physics Loss
         t_batch = torch.full((cell_coords.size(0), 1), t_scalar, device=device, requires_grad=True)
-        loss_fvm = compute_fvm_physics_loss(model, cell_coords, cell_z, edge_index, edge_normals, t_batch)
+        loss_fvm = compute_fvm_physics_loss(model, cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, cell_friction, t_batch)
         
         # 4. Total Loss
         loss = lambda_data * loss_data + lambda_fvm * loss_fvm

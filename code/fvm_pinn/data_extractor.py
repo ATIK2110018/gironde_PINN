@@ -29,10 +29,18 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
         cell_z = dataset.variables['NetNode_z'][:] if 'NetNode_z' in dataset.variables else np.zeros_like(cell_x)
         edge_cells = dataset.variables['NetLink'][:]
         
+    # Extract Area
+    if 'mesh2d_face_area' in dataset.variables:
+        cell_areas = dataset.variables['mesh2d_face_area'][:]
+    else:
+        print("Warning: cell areas not found, defaulting to 1.0. For publication, please ensure mesh2d_face_area exists.")
+        cell_areas = np.ones_like(cell_x)
+        
     num_cells = len(cell_x)
     
     edges_list = []
     normals_list = []
+    lengths_list = []
     
     for i in range(edge_cells.shape[0] if len(edge_cells.shape) == 2 else edge_cells.shape[1]):
         c1 = int(edge_cells[i, 0]) - 1 if len(edge_cells.shape) == 2 else int(edge_cells[0, i]) - 1
@@ -43,25 +51,41 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
             dy = cell_y[c2] - cell_y[c1]
             dist = np.sqrt(dx**2 + dy**2)
             if dist > 0:
-                # The normal vector points from c1 to c2
                 nx = dx / dist
                 ny = dy / dist
+                
+                # Try to get true edge length, fallback to distance between circumcenters
+                edge_len = dist # Fallback approximation
+                if 'mesh2d_edge_length' in dataset.variables:
+                    edge_len = dataset.variables['mesh2d_edge_length'][i]
+                
                 edges_list.append([c1, c2])
                 normals_list.append([nx, ny])
+                lengths_list.append(edge_len)
                 
-                # Opposite direction
                 edges_list.append([c2, c1])
                 normals_list.append([-nx, -ny])
+                lengths_list.append(edge_len)
                 
     dataset.close()
     
     cell_coords = torch.tensor(np.column_stack((cell_x, cell_y)), dtype=torch.float32, device=device)
     cell_z_t = torch.tensor(cell_z, dtype=torch.float32, device=device)
+    cell_areas_t = torch.tensor(cell_areas, dtype=torch.float32, device=device).unsqueeze(1)
+    
     edge_index = torch.tensor(edges_list, dtype=torch.long, device=device).t().contiguous()
     edge_normals = torch.tensor(normals_list, dtype=torch.float32, device=device)
+    edge_lengths_t = torch.tensor(lengths_list, dtype=torch.float32, device=device).unsqueeze(1)
     
     print(f"Extracted {num_cells} FVM cells and {edge_index.size(1)//2} internal faces.")
-    return cell_coords, cell_z_t, edge_index, edge_normals
+    return cell_coords, cell_z_t, cell_areas_t, edge_index, edge_normals, edge_lengths_t
+
+def load_friction_xyz(filepath, cell_coords, device='cpu'):
+    # Loads Manning's n from frictioncoefficient.xyz
+    from scipy.interpolate import griddata
+    data = np.loadtxt(filepath)
+    fric_np = griddata((data[:, 0], data[:, 1]), data[:, 2], (cell_coords[:, 0].cpu().numpy(), cell_coords[:, 1].cpu().numpy()), method='nearest')
+    return torch.tensor(fric_np, dtype=torch.float32, device=device)
 
 def get_boundary_cells(cell_coords, boundary_pli_path, threshold=0.01):
     # Extracts cell indices near the boundary pli lines

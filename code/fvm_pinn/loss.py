@@ -2,11 +2,10 @@ import torch
 import torch.nn.functional as F
 from riemann_solver import roe_flux_2d
 
-def compute_fvm_physics_loss(model, cell_coords, cell_z, edge_index, edge_normals, t_batch, g=9.81):
+def compute_fvm_physics_loss(model, cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, cell_friction, t_batch, g=9.81):
     """
-    Computes the Finite Volume physics loss over the mesh.
-    Because FVM_PINN evaluates continuous time and discrete space, we use autograd 
-    for temporal derivatives and the Roe solver for spatial fluxes.
+    Computes the exact Finite Volume physics loss over the mesh.
+    Includes exact geometric flux scaling and Manning's bottom friction.
     """
     # 1. Enable autograd tracking for the temporal derivative
     t_batch.requires_grad_(True)
@@ -47,20 +46,35 @@ def compute_fvm_physics_loss(model, cell_coords, cell_z, edge_index, edge_normal
         h_still_L, h_still_R, nx, ny, g=g
     )
     
+    # Multiply fluxes by edge lengths! (flux = flux_density * length)
+    flux_mass = flux_mass * edge_lengths
+    flux_mom_x = flux_mom_x * edge_lengths
+    flux_mom_y = flux_mom_y * edge_lengths
+    
     # 5. Sum fluxes into cells
     num_cells = cell_coords.size(0)
     net_flux_mass = torch.zeros((num_cells, 1), device=xi.device).scatter_add_(0, c_L.unsqueeze(1), flux_mass)
     net_flux_mom_x = torch.zeros((num_cells, 1), device=xi.device).scatter_add_(0, c_L.unsqueeze(1), flux_mom_x)
     net_flux_mom_y = torch.zeros((num_cells, 1), device=xi.device).scatter_add_(0, c_L.unsqueeze(1), flux_mom_y)
     
-    # Note: In a true 2D FVM, fluxes are multiplied by edge_length and divided by cell_area.
-    # To keep the neural network loss stable and simple in Kaggle without true geometric areas, 
-    # we treat it as an unscaled residual. The network absorbs the area scale.
+    # Divide by cell area to get divergence (div(F) = SUM(F * L) / A)
+    net_flux_mass = net_flux_mass / cell_areas
+    net_flux_mom_x = net_flux_mom_x / cell_areas
+    net_flux_mom_y = net_flux_mom_y / cell_areas
     
-    # 6. SWE Residuals
+    # 6. Bottom Friction (Manning's n formula: S_f = g * n^2 * U * |U| / h^(1/3))
+    vel_mag = torch.sqrt(u**2 + v**2 + 1e-8)
+    n_roughness = cell_friction.unsqueeze(1)
+    # Clip n to avoid crazy spikes if friction map is messy
+    n_roughness = torch.clamp(n_roughness, 0.01, 0.1) 
+    
+    fric_x = g * (n_roughness**2) * u * vel_mag / (h**(1/3) + 1e-8)
+    fric_y = g * (n_roughness**2) * v * vel_mag / (h**(1/3) + 1e-8)
+    
+    # 7. Exact SWE Residuals (dQ/dt + div(F) + Source = 0)
     res_mass = dxi_dt + net_flux_mass
-    res_mom_x = dhu_dt + net_flux_mom_x
-    res_mom_y = dhv_dt + net_flux_mom_y
+    res_mom_x = dhu_dt + net_flux_mom_x + fric_x
+    res_mom_y = dhv_dt + net_flux_mom_y + fric_y
     
     loss_phys = torch.mean(res_mass**2) + torch.mean(res_mom_x**2) + torch.mean(res_mom_y**2)
     return loss_phys

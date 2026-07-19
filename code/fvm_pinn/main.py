@@ -8,7 +8,7 @@ except ImportError:
 import torch
 import numpy as np
 import netCDF4 as nc
-from data_extractor import extract_fvm_geometry
+from data_extractor import extract_fvm_geometry, load_friction_xyz
 from model import FVM_PINN_Net
 from trainer import train_fvm_pinn
 from visualization import generate_water_level_gif, plot_timeseries_comparison
@@ -41,6 +41,7 @@ if __name__ == "__main__":
     
     nc_mesh_path = find_file('flowfm_net.nc')
     nc_data_path = find_file('map.nc')
+    fric_path = find_file('frictioncoefficient.xyz')
     
     if not nc_mesh_path or not nc_data_path:
         print("Error: Could not find 'FlowFM_net.nc' or 'map.nc' in /kaggle/input/ or ../data/")
@@ -48,9 +49,17 @@ if __name__ == "__main__":
     else:
         print(f"Found Mesh: {nc_mesh_path}")
         print(f"Found Teacher Data: {nc_data_path}")
+        if fric_path: print(f"Found Friction: {fric_path}")
+        else: print("Warning: No friction file found, using default n=0.02")
         
         # 1. Extract Geometry
-        cell_coords, cell_z, edge_index, edge_normals = extract_fvm_geometry(nc_mesh_path, device)
+        cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths = extract_fvm_geometry(nc_mesh_path, device)
+        
+        # Load friction
+        if fric_path:
+            cell_friction = load_friction_xyz(fric_path, cell_coords, device)
+        else:
+            cell_friction = torch.full((cell_coords.size(0),), 0.02, dtype=torch.float32, device=device)
         
         # 2. Load Teacher Data
         times_hr, true_wl_matrix = load_delft3d_teacher_data(nc_data_path)
@@ -64,7 +73,7 @@ if __name__ == "__main__":
         model = FVM_PINN_Net(hidden_dim=128, num_layers=6)
         
         # 4. Train Model
-        train_fvm_pinn(model, cell_coords, cell_z, edge_index, edge_normals, times_hr, true_wl_matrix, epochs=5000, lr=1e-3, device=device)
+        train_fvm_pinn(model, cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, cell_friction, times_hr, true_wl_matrix, epochs=5000, lr=1e-3, device=device)
         
         # 5. Generate Visualizations
         print("\nGenerating Output Visualizations...")
