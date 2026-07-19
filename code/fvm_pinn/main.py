@@ -64,23 +64,35 @@ if __name__ == "__main__":
         # 2. Load Teacher Data
         times_hr, true_wl_matrix = load_delft3d_teacher_data(nc_data_path)
         
-        # Filter for 30h to 72h
-        mask = (times_hr >= 30) & (times_hr <= 72)
+        # Filter starting from 30h (to skip initial burn-in) up to the end of available time
+        mask = (times_hr >= 30)
         times_hr = times_hr[mask]
         true_wl_matrix = true_wl_matrix[mask]
+        
+        # Create an 80/20 Train/Validation Split!
+        split_idx = int(len(times_hr) * 0.8)
+        
+        train_times = times_hr[:split_idx]
+        train_wl = true_wl_matrix[:split_idx]
+        
+        val_times = times_hr[split_idx:]
+        val_wl = true_wl_matrix[split_idx:]
+        
+        print(f"Data Split: {len(train_times)} Train hours, {len(val_times)} Validation hours.")
         
         # 3. Build Model
         model = FVM_PINN_Net(hidden_dim=128, num_layers=6)
         
         # 4. Train Model
-        train_fvm_pinn(model, cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, cell_friction, times_hr, true_wl_matrix, epochs=5000, lr=1e-3, device=device)
+        train_fvm_pinn(model, cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, cell_friction, train_times, train_wl, val_times, val_wl, epochs=5000, lr=1e-3, device=device)
         
         # 5. Generate Visualizations
         print("\nGenerating Output Visualizations...")
         os.makedirs("/kaggle/working/outputs", exist_ok=True)
         
-        # Generate Animation
-        generate_water_level_gif(cell_coords, times_hr, true_wl_matrix, model, 30*3600, 42*3600, 600, "/kaggle/working/outputs/wave_animation.gif", device)
+        # Generate Animation (for the first 12 hours to save GIF rendering time)
+        gif_end_time = min(times_hr[-1], times_hr[0] + 12)
+        generate_water_level_gif(cell_coords, times_hr, true_wl_matrix, model, times_hr[0]*3600, gif_end_time*3600, 600, "/kaggle/working/outputs/wave_animation.gif", device)
         
         # Generate Timeseries for a specific node (e.g. Node 5000)
         node_idx = 5000
