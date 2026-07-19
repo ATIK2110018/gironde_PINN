@@ -23,13 +23,14 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
     print(f"Interpolating Teacher Data from {len(old_times)} hours to {len(new_times)} 1-minute steps...")
     interp_func = interp1d(old_times, true_wl_matrix, axis=0, kind='linear')
     true_wl_matrix = interp_func(new_times)
+    times_hr = new_times # CRITICAL FIX: Update the time array so the training loop sees the whole dataset!
     
     # Use StepLR instead of ReduceLROnPlateau so it doesn't accidentally kill the LR
     # due to the natural stochastic loss fluctuations of the 4-hour window
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
     
     # Calculate exact delta T from the interpolated dataset (should be 60.0 seconds)
-    dt_seconds = (times_hr[1] - times_hr[0]) * 3600.0 / interp_factor
+    dt_seconds = (times_hr[1] - times_hr[0]) * 3600.0
     model.dt = float(dt_seconds)
     
     print(f"Starting Autoregressive Neural FVM Solver (dt = {model.dt} seconds)")
