@@ -65,32 +65,13 @@ class NeuralFVMSolver(nn.Module):
         # ==========================================
         edge_features = torch.cat([h_L, h_R, z_L, z_R, dwl, dz, e_len, nx, ny, lat_L, lat_R], dim=1)
         
-        # The network predicts the time-averaged implicit velocity.
-        # Because dt=3600s, the time-averaged velocity is very small (order of 0.001 m/s)
-        # We scale the tanh by 0.01 so the neural network operates in the optimal mathematical range
-        u_perp = torch.tanh(self.edge_net(edge_features)) * 0.01 
-        
-        # Compute Roe Average Depth (Physical Upwinding Geometry)
-        h_safe_L = torch.clamp(h_L, min=1e-3)
-        h_safe_R = torch.clamp(h_R, min=1e-3)
-        sqrt_hL = torch.sqrt(h_safe_L)
-        sqrt_hR = torch.sqrt(h_safe_R)
-        h_Roe = 0.5 * (h_L + h_R)
-        
-        # EXACT PHYSICAL FLUX: F_mass = h * u_perp
-        flux_mass = h_Roe * u_perp
-        
-        # Multiply by physical edge length
-        flux_mass_total = flux_mass.view(-1, 1) * e_len.view(-1, 1)
-        
-        # Sum fluxes into cells
-        num_cells = h.size(0)
-        net_flux_mass = torch.zeros((num_cells, 1), device=h.device)
-        net_flux_mass.scatter_add_(0, c_L.view(-1, 1), flux_mass_total)
+        # The network predicts the physical momentum for the 1-hour window.
+        # Max velocity in Gironde is around 3.0 m/s
+        u_perp = torch.tanh(self.edge_net(edge_features)) * 3.0 
         
         # Create anti-symmetric messages for node latent updates
+        num_cells = h.size(0)
         aggr_messages = torch.zeros((num_cells, self.hidden_dim), device=h.device)
-        # We pass the flux as a message to update the latent state
         msg = u_perp.expand(-1, self.hidden_dim)
         aggr_messages.scatter_add_(0, c_L.unsqueeze(1).expand(-1, self.hidden_dim), msg)
         aggr_messages.scatter_add_(0, c_R.unsqueeze(1).expand(-1, self.hidden_dim), -msg)
@@ -100,12 +81,39 @@ class NeuralFVMSolver(nn.Module):
         latent_state_next = self.node_net(node_features)
         
         # ==========================================
-        # 2. EXACT CONTINUITY EQUATION (Mass)
+        # 2. EXACT CONTINUITY EQUATION (Differentiable Sub-Stepping)
         # ==========================================
+        # To physically allow the tidal wave to travel ~60 cells per hour,
+        # we sub-step the exact FVM mass equation 60 times.
+        h_sub = h.view(-1, 1)
         c_area = cell_areas.view(-1, 1)
-        div_mass = net_flux_mass / c_area
+        e_len_col = e_len.view(-1, 1)
         
-        h_next = h.view(-1, 1) - self.dt * div_mass.view(-1, 1)
-        h_next = torch.clamp(h_next, min=0.01) # Prevent dry-out
+        dt_sub = self.dt / 60.0
+        
+        for _ in range(60):
+            # Recalculate Roe depth at each micro-step to strictly conserve mass
+            h_L_sub = h_sub[c_L]
+            h_R_sub = h_sub[c_R]
+            
+            h_safe_L = torch.clamp(h_L_sub, min=1e-3)
+            h_safe_R = torch.clamp(h_R_sub, min=1e-3)
+            h_Roe = 0.5 * (h_safe_L + h_safe_R)
+            
+            # Exact physical mass flux
+            flux_mass = h_Roe * u_perp
+            flux_mass_total = flux_mass.view(-1, 1) * e_len_col
+            
+            # Sum fluxes into cells
+            net_flux_mass = torch.zeros((num_cells, 1), device=h.device)
+            net_flux_mass.scatter_add_(0, c_L.view(-1, 1), flux_mass_total)
+            
+            div_mass = net_flux_mass / c_area
+            
+            # Explicit Euler micro-step for Water Level
+            h_sub = h_sub - dt_sub * div_mass
+            h_sub = torch.clamp(h_sub, min=0.01) # Prevent unphysical drying
+            
+        h_next = h_sub
         
         return h_next, latent_state_next
