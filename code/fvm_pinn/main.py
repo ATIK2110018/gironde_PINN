@@ -74,21 +74,27 @@ def main():
         times_seconds=times_seconds
     )
     
+    # ==========================================
+    # Plotting
+    # ==========================================
     os.makedirs('/kaggle/working/outputs', exist_ok=True)
     
-    node_id = 5000
+    nodes_to_plot = [100, 1000, 5000, 15000, 25000, 35000]
     times_hr = times_seconds / 3600.0
     
-    plt.figure(figsize=(10, 5))
-    plt.plot(times_hr, true_wl_matrix[:, node_id], 'k--', label='True Water Level (SRH-2D)', linewidth=2)
-    plt.plot(times_hr, pred_wl_matrix[:, node_id], 'r-', label='Pure FVM Numerical Model', alpha=0.7, linewidth=2)
-    plt.xlabel('Time (Hours)')
-    plt.ylabel('Water Level (m)')
-    plt.title(f'GPU Explicit FVM Solver - Water Level at Interior Node {node_id}')
-    plt.legend()
-    plt.grid(True)
+    plt.figure(figsize=(16, 12))
+    for idx, node_id in enumerate(nodes_to_plot):
+        plt.subplot(3, 2, idx + 1)
+        plt.plot(times_hr, true_wl_matrix[:, node_id], 'k--', label='True Water Level (SRH-2D)', linewidth=2)
+        plt.plot(times_hr, pred_wl_matrix[:, node_id], 'r-', label='Pure FVM Numerical Model', alpha=0.7, linewidth=2)
+        plt.xlabel('Time (Hours)')
+        plt.ylabel('Water Level (m)')
+        plt.title(f'Water Level at Interior Node {node_id}')
+        plt.legend()
+        plt.grid(True)
+        
     plt.tight_layout()
-    plt.savefig(f'/kaggle/working/outputs/node_{node_id}_fvm_numerical_comparison.png')
+    plt.savefig('/kaggle/working/outputs/multi_node_fvm_comparison.png')
     
     print("Simulation complete! Plot saved to /kaggle/working/outputs")
 
