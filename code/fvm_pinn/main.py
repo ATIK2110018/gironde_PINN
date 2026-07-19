@@ -26,6 +26,14 @@ def main():
     import netCDF4 as nc
     ds = nc.Dataset("/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc")
     true_wl_matrix = ds.variables['mesh2d_s1'][:]
+    if hasattr(true_wl_matrix, 'filled'):
+        true_wl_matrix = true_wl_matrix.filled(np.nan)
+    
+    # Replace NaNs (dry cells at low tide) with bed elevation so depth becomes 0
+    cell_z_np = cell_z.cpu().numpy().flatten()
+    # true_wl_matrix shape is (T, N), cell_z_np is (N,)
+    true_wl_matrix = np.where(np.isnan(true_wl_matrix) | (true_wl_matrix < -900), cell_z_np, true_wl_matrix)
+    
     times_seconds = ds.variables['time'][:]
     ds.close()
     
