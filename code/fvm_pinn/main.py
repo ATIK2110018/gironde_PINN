@@ -93,7 +93,7 @@ if __name__ == "__main__":
                 if t_idx < len(times_hr) - 1:
                     true_h_next = torch.tensor(true_wl_matrix[t_idx + 1], dtype=torch.float32, device=device).unsqueeze(1) - cell_z.unsqueeze(1)
                     true_h_next = torch.clamp(true_h_next, min=0.01)
-                    h_current[bc_indices] = true_h_next[bc_indices]
+                    h_current = torch.where(boundary_mask.unsqueeze(1), true_h_next, h_current)
                 
                 # Mathematical Step Forward (t -> t+1)
                 h_current, u_current, v_current = model(h_current, u_current, v_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)

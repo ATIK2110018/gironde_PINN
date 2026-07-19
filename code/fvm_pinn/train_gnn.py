@@ -57,7 +57,8 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
             true_h_next = torch.clamp(true_h_next, min=0.01)
             
             # Physically overwrite the boundary nodes with the incoming tidal wave!
-            h_current[bc_indices] = true_h_next[bc_indices]
+            # We use torch.where instead of in-place assignment to prevent a 10GB autograd memory leak
+            h_current = torch.where(boundary_mask.unsqueeze(1), true_h_next, h_current)
             
             # 3. MATHEMATICALLY STEP FORWARD IN TIME (t -> t+1)
             h_next, u_next, v_next = model(h_current, u_current, v_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
