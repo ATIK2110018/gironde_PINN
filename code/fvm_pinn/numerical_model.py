@@ -47,6 +47,8 @@ class GPUHydrodynamicModel:
         # Approx minimum dx for CFL
         min_dx = torch.min(torch.sqrt(self.cell_areas))
         
+        dt = 0.0  # Initialize dt for the very first print statement at t=0
+        
         while output_idx < len(times_seconds):
             target_time = times_seconds[output_idx]
             
