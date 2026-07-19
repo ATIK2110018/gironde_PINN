@@ -44,17 +44,17 @@ def main():
     # 1. Ocean Boundary (Port Block)
     p1_port = np.array([-1.055107109535667E+000, 4.558144911918696E+001])
     p2_port = np.array([-1.043691864509240E+000, 4.559334500610923E+001])
-    port_mask = get_cells_near_line(cell_coords, p1_port, p2_port, threshold=0.005)
+    port_mask = get_cells_near_line(cell_coords, p1_port, p2_port, threshold=0.0005)
     
     # 2. Garonne River Inflow
     p1_gar = np.array([-5.308167329151710E-001, 4.480884916128741E+001])
     p2_gar = np.array([-5.262550852925010E-001, 4.481051805675912E+001])
-    gar_mask = get_cells_near_line(cell_coords, p1_gar, p2_gar, threshold=0.005)
+    gar_mask = get_cells_near_line(cell_coords, p1_gar, p2_gar, threshold=0.0005)
     
     # 3. Dordogne River Inflow
     p1_dor = np.array([-2.586704969143130E-001, 4.491934439849670E+001])
     p2_dor = np.array([-2.586418807368147E-001, 4.491740422166230E+001])
-    dor_mask = get_cells_near_line(cell_coords, p1_dor, p2_dor, threshold=0.005)
+    dor_mask = get_cells_near_line(cell_coords, p1_dor, p2_dor, threshold=0.0005)
     
     exact_boundary_mask = port_mask | gar_mask | dor_mask
     boundary_mask_t = torch.tensor(exact_boundary_mask, device=device)
