@@ -56,11 +56,11 @@ class FVMPINNTrainer:
         self.device = fvm_engine.device
         
         # We need the boundary mask to apply strict Data Loss penalties at the boundaries
-        self.boundary_mask = torch.tensor(boundary_mask, dtype=torch.bool, device=self.device)
+        self.boundary_mask = boundary_mask.clone().detach().to(dtype=torch.bool, device=self.device)
         self.interior_mask = ~self.boundary_mask
         
         # Coordinate Normalization
-        coords_t = torch.tensor(cell_coords_m, dtype=torch.float32, device=self.device)
+        coords_t = cell_coords_m.clone().detach().to(dtype=torch.float32, device=self.device)
         self.coords_mean = coords_t.mean(dim=0)
         self.coords_std = coords_t.std(dim=0)
         self.norm_coords = (coords_t - self.coords_mean) / self.coords_std
