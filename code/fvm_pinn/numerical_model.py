@@ -24,6 +24,8 @@ class GPUHydrodynamicModel:
         # Center-to-center distances for exact CFL calculation
         c_coords = torch.tensor(cell_coords, dtype=torch.float32, device=device)
         self.d_LR = torch.norm(c_coords[self.c_R] - c_coords[self.c_L], dim=1)
+        # Prevent degenerate identical cell centers from forcing dt=0
+        self.d_LR = torch.clamp(self.d_LR, min=1.0)
         
         self.boundary_mask = boundary_mask
         self.num_cells = cell_areas.shape[0]
@@ -66,12 +68,12 @@ class GPUHydrodynamicModel:
                 )
                 
                 # Exact edge-based CFL calculation!
-                # dt = 0.4 * (distance between cells) / (wave speed on that edge)
-                edge_dt = 0.4 * self.d_LR.unsqueeze(1) / wave_speed
+                # dt = 0.2 * (distance between cells) / (wave speed on that edge)
+                edge_dt = 0.2 * self.d_LR.unsqueeze(1) / wave_speed
                 dynamic_dt = torch.min(edge_dt).item()
                 
-                # Clip to prevent overshooting the target output time (allow small dt for stability)
-                dt = torch.clamp(torch.tensor(dynamic_dt), min=1e-4, max=target_time - current_time).item()
+                # Clip to prevent overshooting the target output time
+                dt = torch.clamp(torch.tensor(dynamic_dt), min=1e-5, max=target_time - current_time).item()
                 
                 # Multiply flux by edge lengths
                 F_mass *= self.e_len
@@ -111,6 +113,10 @@ class GPUHydrodynamicModel:
                 
                 u_next = hu_next / h_next
                 v_next = hv_next / h_next
+                
+                # STRICT VELOCITY CLIPPING: Prevent supersonic numerical explosions
+                u_next = torch.clamp(u_next, min=-15.0, max=15.0)
+                v_next = torch.clamp(v_next, min=-15.0, max=15.0)
                 
                 # 6. Apply Bottom Friction (Semi-Implicit)
                 u_mag_next = torch.sqrt(u_next**2 + v_next**2 + 1e-8)
