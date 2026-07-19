@@ -49,7 +49,7 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
     
     print(f"Identified {len(bc_indices)} Boundary nodes and {len(interior_indices)} Interior nodes.")
     
-    for epoch in range(epochs):
+    for epoch in range(10000): # Hardcoded to 10000 epochs since 1-step is 100x faster
         model.train()
         optimizer.zero_grad()
         
@@ -72,8 +72,13 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         # 3. Predict h_next (1 step)
         pred_h_next = model(h_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
         
-        # 4. Measure exact flux accuracy on interior nodes
-        loss = F.mse_loss(pred_h_next[interior_indices], true_h_next[interior_indices])
+        # 4. Measure exact FLUX accuracy (Derivative Supervision)
+        # Because dt=60s, the change in water level is microscopic (e.g. 0.001 meters).
+        # We MUST supervise the derivative directly and multiply by 1000 to prevent the loss from vanishing into 0.000000!
+        dh_pred = pred_h_next[interior_indices] - h_current[interior_indices]
+        dh_true = true_h_next[interior_indices] - h_current[interior_indices]
+        
+        loss = F.mse_loss(dh_pred * 1000.0, dh_true * 1000.0)
         
         loss.backward()
         
@@ -81,8 +86,8 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         optimizer.step()
         scheduler.step()
         
-        if epoch % 50 == 0:
-            print(f"Epoch {epoch:4d} | Step {t_idx} | Flux Loss: {loss.item():.6f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+        if epoch % 500 == 0:
+            print(f"Epoch {epoch:5d} | Step {t_idx:4d} | Scaled Flux Loss: {loss.item():.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
             
     print("Solver Training Complete! Saving weights to 'neural_fvm_best.pth'")
     torch.save(model.state_dict(), "neural_fvm_best.pth")
