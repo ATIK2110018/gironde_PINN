@@ -132,8 +132,12 @@ class GPUHydrodynamicModel:
                 bc_wl_tensor = torch.tensor(bc_wl, dtype=torch.float32, device=self.device)
                 bc_h = torch.clamp(bc_wl_tensor - self.cell_z[self.boundary_mask].squeeze(1), min=0.01)
                 
-                # Force boundary water levels
+                # Force boundary water levels AND set momentum to zero (Infinite Reservoir Assumption)
+                # This prevents boundary cells from accumulating massive negative momentum 
+                # which causes violent oscillations and NaN explosions.
                 h_next[self.boundary_mask, 0] = bc_h
+                hu_next[self.boundary_mask, 0] = 0.0
+                hv_next[self.boundary_mask, 0] = 0.0
                 
                 # Advance Step
                 h = h_next
