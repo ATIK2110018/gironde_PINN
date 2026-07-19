@@ -33,30 +33,97 @@ class GPUHydrodynamicModel:
         self.g = 9.81
         self.manning_n = 0.025 # Standard roughness for estuary
         
+    def simulate_one_step(self, h, u, v, h_still, dt):
+        """
+        Differentiable FVM step for PINN Physics Loss.
+        Takes the current state tensors and steps them forward by dt.
+        Returns h_next, u_next, v_next.
+        """
+        # Riemann Solver for Edge Fluxes
+        h_L, h_R = h[self.c_L], h[self.c_R]
+        u_L, u_R = u[self.c_L], u[self.c_R]
+        v_L, v_R = v[self.c_L], v[self.c_R]
+        h_still_L, h_still_R = h_still[self.c_L], h_still[self.c_R]
+        
+        F_mass, F_mom_x, F_mom_y, wave_speed = roe_flux_2d(
+            h_L, h_R, u_L, u_R, v_L, v_R, 
+            h_still_L, h_still_R, self.nx, self.ny, self.g
+        )
+        
+        F_mass *= self.e_len
+        F_mom_x *= self.e_len
+        F_mom_y *= self.e_len
+        
+        div_mass = torch.zeros_like(h)
+        div_mom_x = torch.zeros_like(h)
+        div_mom_y = torch.zeros_like(h)
+        
+        div_mass.scatter_add_(0, self.c_L.unsqueeze(1), F_mass)
+        div_mass.scatter_add_(0, self.c_R.unsqueeze(1), -F_mass)
+        
+        div_mom_x.scatter_add_(0, self.c_L.unsqueeze(1), F_mom_x)
+        div_mom_x.scatter_add_(0, self.c_R.unsqueeze(1), -F_mom_x)
+        
+        div_mom_y.scatter_add_(0, self.c_L.unsqueeze(1), F_mom_y)
+        div_mom_y.scatter_add_(0, self.c_R.unsqueeze(1), -F_mom_y)
+        
+        div_mass /= self.cell_areas
+        div_mom_x /= self.cell_areas
+        div_mom_y /= self.cell_areas
+        
+        # Explicit State Update
+        h_next = h - dt * div_mass
+        
+        dry_mask = (h_next < 0.005)
+        # Using a smooth clamp proxy (like relu) keeps gradients flowing better for PINNs, 
+        # but standard clamp works fine since PyTorch defines its subgradient.
+        h_next = torch.clamp(h_next, min=0.005)
+        
+        hu_next = h*u - dt * div_mom_x
+        hv_next = h*v - dt * div_mom_y
+        
+        hu_next[dry_mask] = 0.0
+        hv_next[dry_mask] = 0.0
+        
+        u_next = hu_next / h_next
+        v_next = hv_next / h_next
+        
+        u_next = torch.clamp(u_next, min=-15.0, max=15.0)
+        v_next = torch.clamp(v_next, min=-15.0, max=15.0)
+        
+        # Bottom Friction
+        u_mag_next = torch.sqrt(u_next**2 + v_next**2 + 1e-8)
+        friction = self.g * self.manning_n**2 * u_mag_next / (h_next**(4/3) + 1e-8)
+        u_next = u_next / (1.0 + dt * friction)
+        v_next = v_next / (1.0 + dt * friction)
+        
+        return h_next, u_next, v_next, wave_speed
+
     def simulate(self, initial_wl, boundary_wl_matrix, times_seconds):
         print(f"Starting GPU Explicit FVM Simulation for {len(times_seconds)} time steps.")
         
-        # 1. Initialize State
         h = torch.tensor(initial_wl, dtype=torch.float32, device=self.device).unsqueeze(1) - self.cell_z
         h = torch.clamp(h, min=0.01)
         u = torch.zeros_like(h)
         v = torch.zeros_like(h)
-        
-        # Well-balanced reference state
         h_still = h.clone()
         
         pred_wl_matrix = []
         
         current_time = times_seconds[0]
         output_idx = 0
-        
-        dt = 0.0  # Initialize dt for the very first print statement at t=0
+        dt = 0.0
         
         while output_idx < len(times_seconds):
             target_time = times_seconds[output_idx]
             
             while current_time < target_time:
-                # 3. Riemann Solver for Edge Fluxes (Must compute fluxes before finding local dt)
+                # To prevent duplicating Riemann solver code, call simulate_one_step!
+                # But we need wave_speed to compute dt first. 
+                # For an explicit solver, we can do a dry-run or just compute wave_speed here.
+                # Since we want exactly the same code for both, let's keep the explicit loop here for performance,
+                # because the dynamic dt requires checking wave_speed BEFORE taking the step.
+                
                 h_L, h_R = h[self.c_L], h[self.c_R]
                 u_L, u_R = u[self.c_L], u[self.c_R]
                 v_L, v_R = v[self.c_L], v[self.c_R]
@@ -67,30 +134,22 @@ class GPUHydrodynamicModel:
                     h_still_L, h_still_R, self.nx, self.ny, self.g
                 )
                 
-                # Exact edge-based CFL calculation!
-                # dt = 0.2 * (distance between cells) / (wave speed on that edge)
                 edge_dt = 0.2 * self.d_LR.unsqueeze(1) / wave_speed
                 dynamic_dt = torch.min(edge_dt).item()
-                
-                # Clip to prevent overshooting the target output time
                 dt = torch.clamp(torch.tensor(dynamic_dt), min=1e-5, max=target_time - current_time).item()
                 
-                # Multiply flux by edge lengths
                 F_mass *= self.e_len
                 F_mom_x *= self.e_len
                 F_mom_y *= self.e_len
                 
-                # 4. Scatter to Compute Cell Divergences
                 div_mass = torch.zeros_like(h)
                 div_mom_x = torch.zeros_like(h)
                 div_mom_y = torch.zeros_like(h)
                 
                 div_mass.scatter_add_(0, self.c_L.unsqueeze(1), F_mass)
                 div_mass.scatter_add_(0, self.c_R.unsqueeze(1), -F_mass)
-                
                 div_mom_x.scatter_add_(0, self.c_L.unsqueeze(1), F_mom_x)
                 div_mom_x.scatter_add_(0, self.c_R.unsqueeze(1), -F_mom_x)
-                
                 div_mom_y.scatter_add_(0, self.c_L.unsqueeze(1), F_mom_y)
                 div_mom_y.scatter_add_(0, self.c_R.unsqueeze(1), -F_mom_y)
                 
@@ -98,27 +157,20 @@ class GPUHydrodynamicModel:
                 div_mom_x /= self.cell_areas
                 div_mom_y /= self.cell_areas
                 
-                # 5. Explicit State Update
                 h_next = h - dt * div_mass
-                
                 dry_mask = (h_next < 0.005)
                 h_next = torch.clamp(h_next, min=0.005)
                 
                 hu_next = h*u - dt * div_mom_x
                 hv_next = h*v - dt * div_mom_y
-                
-                # Kill momentum in dry cells to prevent velocity explosion
                 hu_next[dry_mask] = 0.0
                 hv_next[dry_mask] = 0.0
                 
                 u_next = hu_next / h_next
                 v_next = hv_next / h_next
-                
-                # STRICT VELOCITY CLIPPING: Prevent supersonic numerical explosions
                 u_next = torch.clamp(u_next, min=-15.0, max=15.0)
                 v_next = torch.clamp(v_next, min=-15.0, max=15.0)
                 
-                # 6. Apply Bottom Friction (Semi-Implicit)
                 u_mag_next = torch.sqrt(u_next**2 + v_next**2 + 1e-8)
                 friction = self.g * self.manning_n**2 * u_mag_next / (h_next**(4/3) + 1e-8)
                 u_next = u_next / (1.0 + dt * friction)
