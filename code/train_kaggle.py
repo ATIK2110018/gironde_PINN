@@ -9,6 +9,9 @@ import numpy as np
 import math
 from scipy.interpolate import griddata
 from scipy.spatial import cKDTree
+import matplotlib.pyplot as plt
+import matplotlib.tri as mtri
+import matplotlib.collections as mcoll
 
 # Setup GPU if available
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
