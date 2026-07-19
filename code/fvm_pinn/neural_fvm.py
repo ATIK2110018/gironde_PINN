@@ -83,16 +83,18 @@ class NeuralFVMSolver(nn.Module):
         flux_mass, _, _ = roe_flux_2d(h_L, h_R, u_L, u_R, v_L, v_R, -z_L, -z_R, nx, ny)
         
         # Multiply by physical edge length
-        flux_mass_total = flux_mass * e_len
+        flux_mass_total = flux_mass.view(-1, 1) * e_len.view(-1, 1)
         
         # Sum fluxes into cells
-        net_flux_mass = torch.zeros((num_cells, 1), device=h.device).scatter_add_(0, c_L.unsqueeze(1), flux_mass_total)
+        net_flux_mass = torch.zeros((num_cells, 1), device=h.device)
+        net_flux_mass.scatter_add_(0, c_L.view(-1, 1), flux_mass_total)
         
         # Divide by exact physical polygon area (Divergence Theorem)
-        div_mass = net_flux_mass / cell_areas.unsqueeze(1)
+        c_area = cell_areas.view(-1, 1)
+        div_mass = net_flux_mass / c_area
         
         # Exact Euler Step for Water Level (Mass Conservation is guaranteed by physics!)
-        h_next = h - self.dt * div_mass
+        h_next = h.view(-1, 1) - self.dt * div_mass.view(-1, 1)
         h_next = torch.clamp(h_next, min=0.01) # Prevent unphysical drying
         
-        return h_next, u_next, v_next
+        return h_next, u_next.view(-1, 1), v_next.view(-1, 1)
