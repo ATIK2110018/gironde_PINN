@@ -28,7 +28,9 @@ def main():
     print(f"Starting FVM-PINN Training on {device}")
     
     print("Extracting FVM Geometry...")
-    nc_file = '/kaggle/working/gironde_PINN/data/input/FlowFM_net.nc'
+    # CRITICAL FALLBACK: FlowFM_net.nc only has 19,319 cells, but the target data has 36,271 cells.
+    # We MUST use FlowFM_map.nc to ensure the geometry strictly matches the water level arrays.
+    nc_file = '/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc'
     cell_coords_t, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, topo_boundary_mask = extract_fvm_geometry(nc_file, device=device)
     cell_coords = cell_coords_t.cpu().numpy()
     
