@@ -60,8 +60,8 @@ class GPUHydrodynamicModel:
                 
                 # CFL = 0.4 (Strictly stable for explicit FVM)
                 dynamic_dt = 0.4 * min_dx / max_speed
-                # Clip to prevent overshooting the target output time
-                dt = torch.clamp(dynamic_dt, min=0.01, max=target_time - current_time).item()
+                # Clip to prevent overshooting the target output time (allow small dt for stability)
+                dt = torch.clamp(dynamic_dt, min=1e-4, max=target_time - current_time).item()
                 
                 # 3. Riemann Solver for Edge Fluxes
                 h_L, h_R = h[self.c_L], h[self.c_R]
@@ -99,10 +99,16 @@ class GPUHydrodynamicModel:
                 
                 # 5. Explicit State Update
                 h_next = h - dt * div_mass
-                h_next = torch.clamp(h_next, min=0.001)
+                
+                dry_mask = (h_next < 0.005)
+                h_next = torch.clamp(h_next, min=0.005)
                 
                 hu_next = h*u - dt * div_mom_x
                 hv_next = h*v - dt * div_mom_y
+                
+                # Kill momentum in dry cells to prevent velocity explosion
+                hu_next[dry_mask] = 0.0
+                hv_next[dry_mask] = 0.0
                 
                 u_next = hu_next / h_next
                 v_next = hv_next / h_next
