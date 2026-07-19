@@ -9,12 +9,27 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
     """
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    from scipy.interpolate import interp1d
+    
+    # ==========================================
+    # USER UPGRADE: INTERPOLATE TEACHER DATA
+    # ==========================================
+    # We interpolate the 1-hour teacher data down to 10-minute intervals (6x finer resolution).
+    # This directly solves the massive time-jump instability and gives the AI 6x more training data!
+    interp_factor = 6
+    old_times = np.arange(len(times_hr))
+    new_times = np.linspace(0, len(times_hr)-1, len(times_hr)*interp_factor - (interp_factor-1))
+    
+    print(f"Interpolating Teacher Data from {len(old_times)} hours to {len(new_times)} 10-minute steps...")
+    interp_func = interp1d(old_times, true_wl_matrix, axis=0, kind='linear')
+    true_wl_matrix = interp_func(new_times)
+    
     # Use StepLR instead of ReduceLROnPlateau so it doesn't accidentally kill the LR
     # due to the natural stochastic loss fluctuations of the 4-hour window
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
     
-    # Calculate exact delta T from the dataset
-    dt_seconds = (times_hr[1] - times_hr[0]) * 3600.0
+    # Calculate exact delta T from the interpolated dataset (should be 600.0 seconds)
+    dt_seconds = (times_hr[1] - times_hr[0]) * 3600.0 / interp_factor
     model.dt = float(dt_seconds)
     
     print(f"Starting Autoregressive Neural FVM Solver (dt = {model.dt} seconds)")

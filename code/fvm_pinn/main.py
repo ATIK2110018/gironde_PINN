@@ -65,9 +65,20 @@ if __name__ == "__main__":
         
         # 5. Full Simulation Rollout (Testing it like Delft3D)
         print("\nRunning Full Simulation Forward...")
-        model.eval()
         
-        # Get boundary indices to force boundary condition during rollout
+        from scipy.interpolate import interp1d
+        
+        interp_factor = 6
+        old_times = np.arange(len(times_hr))
+        new_times = np.linspace(0, len(times_hr)-1, len(times_hr)*interp_factor - (interp_factor-1))
+        
+        interp_func = interp1d(old_times, true_wl_matrix, axis=0, kind='linear')
+        true_wl_matrix = interp_func(new_times)
+        times_hr = new_times # Update times_hr to match the new length for plotting
+        
+        print(f"Testing on {len(times_hr)} interpolated 10-minute steps.")
+        
+        # Identify Boundary Nodes for the Test Rollout
         x_min, x_max = cell_coords[:,0].min(), cell_coords[:,0].max()
         y_min, y_max = cell_coords[:,1].min(), cell_coords[:,1].max()
         boundary_mask = (cell_coords[:,0] < x_min + 0.05*(x_max-x_min)) | \
