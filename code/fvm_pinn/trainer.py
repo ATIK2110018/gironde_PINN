@@ -19,8 +19,9 @@ def train_fvm_pinn(model, cell_coords, cell_z, cell_areas, edge_index, edge_norm
     print("Starting exact FVM-PINN Training (Teacher Strategy)...")
     
     # Physics is heavily regularized, but guided by Teacher data to avoid flat water collapse
-    lambda_fvm = 1.0
-    lambda_data = 10.0
+    # We use a very low lambda_fvm because raw SWE residuals are massive compared to MSE loss
+    lambda_fvm = 0.001
+    lambda_data = 100.0
     
     for epoch in range(epochs):
         model.train()
