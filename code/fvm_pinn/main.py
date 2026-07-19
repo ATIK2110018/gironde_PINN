@@ -65,6 +65,7 @@ if __name__ == "__main__":
         
         # 5. Full Simulation Rollout (Testing it like Delft3D)
         print("\nRunning Full Simulation Forward...")
+        model.eval()
         
         from scipy.interpolate import interp1d
         
@@ -85,29 +86,27 @@ if __name__ == "__main__":
                         (cell_coords[:,0] > x_max - 0.05*(x_max-x_min)) | \
                         (cell_coords[:,1] < y_min + 0.05*(y_max-y_min)) | \
                         (cell_coords[:,1] > y_max - 0.05*(y_max-y_min))
-        bc_indices = torch.where(boundary_mask)[0]
         
+        # Initialize PDE State
         h_current = torch.tensor(true_wl_matrix[0], dtype=torch.float32, device=device).unsqueeze(1) - cell_z.unsqueeze(1)
         h_current = torch.clamp(h_current, min=0.01)
-        latent_current = torch.zeros((h_current.size(0), model.hidden_dim), device=device)
         
         pred_wl_matrix = []
         
         with torch.no_grad():
             for t_idx in range(len(times_hr)):
-                # Convert depth (h) back to water level (eta) for saving
+                # Force exact boundary conditions
+                true_h_now = torch.tensor(true_wl_matrix[t_idx], dtype=torch.float32, device=device).unsqueeze(1) - cell_z.unsqueeze(1)
+                true_h_now = torch.clamp(true_h_now, min=0.01)
+                h_current = torch.where(boundary_mask.unsqueeze(1), true_h_now, h_current)
+                
+                # Save predicted water level (h + z)
                 eta = h_current.squeeze(1) + cell_z
                 pred_wl_matrix.append(eta.cpu().numpy())
                 
-                # Hard Boundary Condition for the NEXT step
-                if t_idx < len(times_hr) - 1:
-                    true_h_next = torch.tensor(true_wl_matrix[t_idx + 1], dtype=torch.float32, device=device).unsqueeze(1) - cell_z.unsqueeze(1)
-                    true_h_next = torch.clamp(true_h_next, min=0.01)
-                    h_current = torch.where(boundary_mask.unsqueeze(1), true_h_next, h_current)
-                
-                # Mathematical Step Forward (t -> t+1)
-                h_current, latent_current = model(h_current, latent_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
-                
+                # Step physics engine forward (Pure Markovian)
+                h_current = model(h_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
+        
         pred_wl_matrix = np.array(pred_wl_matrix)
         
         import matplotlib.pyplot as plt
