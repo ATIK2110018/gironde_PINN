@@ -125,40 +125,40 @@ def main():
     plt.close()
     
     # ==========================================
-    # TRAIN PINN
+    # TRAIN PINN (Sequential Time-Marching)
     # ==========================================
     
-    epochs = 2500  # Increased epochs since we are using Fourier Features & deeper network
     loss_history_data = []
     loss_history_phys = []
     
-    print(f"Starting Training for {epochs} Epochs with Curriculum Time-Windowing...")
+    print("Starting Sequential Time-Marching Training...")
     
-    for epoch in range(epochs):
-        epoch_data_loss = 0.0
-        epoch_phys_loss = 0.0
+    # We step through time chronologically (Causality)
+    for t_idx in range(len(times_seconds) - 1):
         
-        # Curriculum Learning: Slowly expand the time window the NN is allowed to see.
-        # It must learn the first few hours perfectly before we let it see the rest of the tide.
-        # This preserves Causality!
-        progress = epoch / (epochs * 0.8) # Full window reached at 80% of training
-        max_t_idx = min(len(times_seconds)-1, max(20, int(len(times_seconds) * progress)))
+        epoch_data = 0.0
+        epoch_phys = 0.0
         
-        sampled_t_indices = np.random.choice(range(max_t_idx), size=20, replace=False)
-        
-        for t_idx in sampled_t_indices:
+        # 1. Train heavily on the new time front
+        for _ in range(15):
             d_loss, p_loss = trainer.train_step(t_idx)
-            epoch_data_loss += d_loss
-            epoch_phys_loss += p_loss
+            epoch_data += d_loss
+            epoch_phys += p_loss
             
-        epoch_data_loss /= 20
-        epoch_phys_loss /= 20
+        # 2. Replay Memory: Sample past time steps to prevent Catastrophic Forgetting
+        if t_idx > 0:
+            past_indices = np.random.choice(range(t_idx), size=min(t_idx, 5), replace=False)
+            for past_idx in past_indices:
+                trainer.train_step(past_idx)
+                
+        epoch_data /= 15
+        epoch_phys /= 15
         
-        loss_history_data.append(epoch_data_loss)
-        loss_history_phys.append(epoch_phys_loss)
+        loss_history_data.append(epoch_data)
+        loss_history_phys.append(epoch_phys)
         
-        if epoch % 100 == 0:
-            print(f"Epoch {epoch}/{epochs} | Window: 0 to {max_t_idx}/{len(times_seconds)} | Data Loss: {epoch_data_loss:.4f} | FVM Physics Loss: {epoch_phys_loss:.4f}")
+        if t_idx % 5 == 0:
+            print(f"Time Step {t_idx}/{len(times_seconds)-1} | Time: {times_seconds[t_idx]/3600:.1f} hr | Data Loss: {epoch_data:.4f} | Phys Loss: {epoch_phys:.4f}")
             
     # Save the trained model
     torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')
