@@ -26,8 +26,8 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
                     (cell_coords[:,1] < y_min + 0.05*(y_max-y_min)) | \
                     (cell_coords[:,1] > y_max - 0.05*(y_max-y_min))
                     
-    bc_indices = torch.tensor(np.where(boundary_mask)[0], dtype=torch.long, device=device)
-    interior_indices = torch.tensor(np.where(~boundary_mask)[0], dtype=torch.long, device=device)
+    bc_indices = torch.where(boundary_mask)[0]
+    interior_indices = torch.where(~boundary_mask)[0]
     
     print(f"Identified {len(bc_indices)} Boundary nodes and {len(interior_indices)} Interior nodes.")
     
