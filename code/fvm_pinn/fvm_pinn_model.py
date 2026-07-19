@@ -95,8 +95,10 @@ class FVMPINNTrainer:
         norm_t_curr = self.get_normalized_t(t_val.unsqueeze(0))
         h_curr, u_curr, v_curr = self.pinn(norm_t_curr, self.norm_coords)
         
-        # Only compute data loss on interior cells, or everywhere if we trust the data
-        data_loss = nn.MSELoss()(h_curr, true_h)
+        # PINN predicts Depth (h). True data is Water Level (elevation).
+        # Water Level = Depth + Bed Elevation (cell_z)
+        wl_curr = h_curr + self.fvm.cell_z
+        data_loss = nn.MSELoss()(wl_curr, true_h)
         
         # 2. Evaluate Exact FVM Physics Loss
         phys_loss = self.compute_physics_loss(t_val, dt=1.0)
