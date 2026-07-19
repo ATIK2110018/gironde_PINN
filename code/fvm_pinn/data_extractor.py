@@ -16,18 +16,22 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
         cell_z = dataset.variables['mesh2d_face_z'][:] if 'mesh2d_face_z' in dataset.variables else np.zeros_like(cell_x)
         if 'mesh2d_edge_faces' in dataset.variables:
             edge_cells = dataset.variables['mesh2d_edge_faces'][:]
+            edge_cells = np.ma.filled(edge_cells, -1)
         else:
             edge_cells = dataset.variables['mesh2d_edge_nodes'][:]
+            edge_cells = np.ma.filled(edge_cells, -1)
     elif 'mesh2d_node_x' in dataset.variables:
         cell_x = dataset.variables['mesh2d_node_x'][:]
         cell_y = dataset.variables['mesh2d_node_y'][:]
         cell_z = dataset.variables['mesh2d_node_z'][:] if 'mesh2d_node_z' in dataset.variables else np.zeros_like(cell_x)
         edge_cells = dataset.variables['mesh2d_edge_nodes'][:]
+        edge_cells = np.ma.filled(edge_cells, -1)
     else:
         cell_x = dataset.variables['NetNode_x'][:]
         cell_y = dataset.variables['NetNode_y'][:]
         cell_z = dataset.variables['NetNode_z'][:] if 'NetNode_z' in dataset.variables else np.zeros_like(cell_x)
         edge_cells = dataset.variables['NetLink'][:]
+        edge_cells = np.ma.filled(edge_cells, -1)
         
     # Extract Area
     if 'mesh2d_face_area' in dataset.variables:
