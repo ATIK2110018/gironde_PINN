@@ -31,7 +31,7 @@ class GPUHydrodynamicModel:
         self.num_cells = cell_areas.shape[0]
         
         self.g = 9.81
-        self.manning_n = 0.025 # Standard roughness for estuary
+        self.manning_n = 0.019 # True value from user's domain
         
     def simulate_one_step(self, h, u, v, h_still, dt):
         """

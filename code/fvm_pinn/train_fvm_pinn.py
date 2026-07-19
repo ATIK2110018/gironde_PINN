@@ -104,7 +104,7 @@ def main():
     # Subplot 2: Boundary Lines & Manning's N
     plt.subplot(1, 2, 2)
     # Background mesh colored by constant manning's n
-    manning_array = np.full_like(cell_z_np, 0.025)
+    manning_array = np.full_like(cell_z_np, 0.019)
     sc2 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=manning_array, cmap='viridis', s=1)
     plt.colorbar(sc2, label="Manning's n")
     
