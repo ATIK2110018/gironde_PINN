@@ -10,21 +10,24 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
     
     # In D-Flow FM, water levels are defined at "faces" (circumcenters)
     # So "faces" in D-Flow FM = FVM "cells"
-    cell_x = dataset.variables['mesh2d_face_x'][:]
-    cell_y = dataset.variables['mesh2d_face_y'][:]
-    cell_z = dataset.variables['mesh2d_face_z'][:] if 'mesh2d_face_z' in dataset.variables else np.zeros_like(cell_x)
-    
-    # We need the links between cells to compute fluxes
-    # "edge_faces" tells us which two cells share an edge
-    if 'mesh2d_edge_faces' in dataset.variables:
-        edge_cells = dataset.variables['mesh2d_edge_faces'][:]
-    else:
-        # Fallback if standard UGRID isn't perfectly followed
-        print("Warning: mesh2d_edge_faces not found, falling back to node-based approximation.")
+    if 'mesh2d_face_x' in dataset.variables:
+        cell_x = dataset.variables['mesh2d_face_x'][:]
+        cell_y = dataset.variables['mesh2d_face_y'][:]
+        cell_z = dataset.variables['mesh2d_face_z'][:] if 'mesh2d_face_z' in dataset.variables else np.zeros_like(cell_x)
+        if 'mesh2d_edge_faces' in dataset.variables:
+            edge_cells = dataset.variables['mesh2d_edge_faces'][:]
+        else:
+            edge_cells = dataset.variables['mesh2d_edge_nodes'][:]
+    elif 'mesh2d_node_x' in dataset.variables:
         cell_x = dataset.variables['mesh2d_node_x'][:]
         cell_y = dataset.variables['mesh2d_node_y'][:]
-        cell_z = np.zeros_like(cell_x)
+        cell_z = dataset.variables['mesh2d_node_z'][:] if 'mesh2d_node_z' in dataset.variables else np.zeros_like(cell_x)
         edge_cells = dataset.variables['mesh2d_edge_nodes'][:]
+    else:
+        cell_x = dataset.variables['NetNode_x'][:]
+        cell_y = dataset.variables['NetNode_y'][:]
+        cell_z = dataset.variables['NetNode_z'][:] if 'NetNode_z' in dataset.variables else np.zeros_like(cell_x)
+        edge_cells = dataset.variables['NetLink'][:]
         
     num_cells = len(cell_x)
     
