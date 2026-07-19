@@ -185,7 +185,8 @@ def main():
     
     with torch.no_grad():
         for t_idx, t_val in enumerate(times_seconds):
-            norm_t = trainer.get_normalized_t(torch.tensor([t_val], device=device))
+            # Force float32 to prevent Float vs Double dtype mismatch during inference
+            norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
             
             # Extract coordinates for just the 3 nodes
             node_coords_m = cell_coords_m[nodes_to_plot]
