@@ -2,83 +2,91 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 
-def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, cell_friction, times_hr, true_wl_matrix, epochs=2000, lr=1e-3, device='cpu'):
+def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, cell_friction, times_hr, true_wl_matrix, epochs=10000, lr=1e-3, device='cpu'):
     """
-    Trains the Differentiable Simulator explicitly over time (Autoregressive).
-    This acts EXACTLY like Delft3D.
+    Classical Coordinate PINN Trainer (HydroNet Style).
+    We randomly sample (x, y, t) points from the dataset, enforce the data loss on Water Level,
+    and use Autograd to enforce the Mass Continuity Equation to infer (u, v) velocities.
     """
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    from scipy.interpolate import interp1d
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=2000, gamma=0.5)
     
-    # ==========================================
-    # USER UPGRADE: INTERPOLATE TEACHER DATA
-    # ==========================================
-    # We interpolate the 1-hour teacher data down to 1-minute intervals (60x finer resolution).
-    # This guarantees absolute CFL stability and gives the AI massive training data!
-    interp_factor = 60
-    old_times = np.arange(len(times_hr))
-    new_times = np.linspace(0, len(times_hr)-1, len(times_hr)*interp_factor - (interp_factor-1))
+    print(f"Starting Classical PINN Training (Coordinate-based).")
     
-    print(f"Interpolating Teacher Data from {len(old_times)} hours to {len(new_times)} 1-minute steps...")
-    interp_func = interp1d(old_times, true_wl_matrix, axis=0, kind='linear')
-    true_wl_matrix = interp_func(new_times)
-    times_hr = new_times # CRITICAL FIX: Update the time array so the training loop sees the whole dataset!
+    num_t = len(times_hr)
+    num_cells = cell_coords.shape[0]
     
-    # Use StepLR instead of ReduceLROnPlateau so it doesn't accidentally kill the LR
-    # due to the natural stochastic loss fluctuations of the 4-hour window
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
+    # 1. Normalize coordinates to prevent exploding gradients in the MLP
+    x_mean, x_std = cell_coords[:,0].mean(), cell_coords[:,0].std()
+    y_mean, y_std = cell_coords[:,1].mean(), cell_coords[:,1].std()
+    t_mean, t_std = times_hr.mean(), times_hr.std()
     
-    # Calculate exact delta T from the interpolated dataset (should be 60.0 seconds)
-    dt_seconds = (times_hr[1] - times_hr[0]) * 3600.0
-    model.dt = float(dt_seconds)
+    model.x_mean, model.x_std = x_mean, x_std
+    model.y_mean, model.y_std = y_mean, y_std
+    model.t_mean, model.t_std = t_mean, t_std
     
-    print(f"Starting Autoregressive Neural FVM Solver (dt = {model.dt} seconds)")
+    # 2. Pre-load all coordinates into tensors
+    cell_x_all = torch.tensor(cell_coords[:,0], dtype=torch.float32, device=device).unsqueeze(1)
+    cell_y_all = torch.tensor(cell_coords[:,1], dtype=torch.float32, device=device).unsqueeze(1)
+    times_all = torch.tensor(times_hr, dtype=torch.float32, device=device).unsqueeze(1)
+    cell_z_all = cell_z.to(device).unsqueeze(1)
     
-    # Identify Boundary Nodes to enforce Hard Boundary Conditions
-    x_min, x_max = cell_coords[:,0].min(), cell_coords[:,0].max()
-    y_min, y_max = cell_coords[:,1].min(), cell_coords[:,1].max()
+    batch_size = 15000 # Massive batch size for dense point cloud training
     
-    boundary_mask = (cell_coords[:,0] < x_min + 0.05*(x_max-x_min)) | \
-                    (cell_coords[:,0] > x_max - 0.05*(x_max-x_min)) | \
-                    (cell_coords[:,1] < y_min + 0.05*(y_max-y_min)) | \
-                    (cell_coords[:,1] > y_max - 0.05*(y_max-y_min))
-                    
-    bc_indices = torch.where(boundary_mask)[0]
-    interior_indices = torch.where(~boundary_mask)[0]
-    
-    print(f"Identified {len(bc_indices)} Boundary nodes and {len(interior_indices)} Interior nodes.")
-    
-    for epoch in range(10000): # Hardcoded to 10000 epochs since 1-step is 100x faster
+    for epoch in range(epochs):
         model.train()
         optimizer.zero_grad()
         
-        # Pure 1-Step Physics-Informed Training (Like DeepMind's MeshGraphNets)
-        # Randomly sample a time step from the dataset
-        t_idx = np.random.randint(0, len(times_hr) - 1)
+        # 3. Randomly sample a batch of points in space-time
+        batch_c = np.random.randint(0, num_cells, batch_size)
+        batch_t = np.random.randint(0, num_t, batch_size)
         
-        # 1. Input: True state at time t
-        true_h_now = torch.tensor(true_wl_matrix[t_idx], dtype=torch.float32, device=device).unsqueeze(1) - cell_z.unsqueeze(1)
-        true_h_now = torch.clamp(true_h_now, min=0.01)
+        # Extract true water depth for this batch
+        true_h_batch = torch.tensor(true_wl_matrix[batch_t, batch_c], dtype=torch.float32, device=device).unsqueeze(1)
+        z_batch = cell_z_all[batch_c]
+        true_depth_batch = torch.clamp(true_h_batch - z_batch, min=0.01)
         
-        # 2. Target: True state at time t+1
-        true_h_next = torch.tensor(true_wl_matrix[t_idx + 1], dtype=torch.float32, device=device).unsqueeze(1) - cell_z.unsqueeze(1)
-        true_h_next = torch.clamp(true_h_next, min=0.01)
+        # Extract normalized coordinates
+        x_norm = (cell_x_all[batch_c] - x_mean) / x_std
+        y_norm = (cell_y_all[batch_c] - y_mean) / y_std
+        t_norm = (times_all[batch_t] - t_mean) / t_std
         
-        # We physically enforce the boundary conditions on the input state
-        h_current = true_h_now.clone()
-        h_current[bc_indices] = true_h_next[bc_indices] # Use t+1 boundary condition as the driving force
+        # We MUST set requires_grad=True to compute PDE residuals via Autograd
+        x_norm.requires_grad_(True)
+        y_norm.requires_grad_(True)
+        t_norm.requires_grad_(True)
         
-        # 3. Predict h_next (1 step)
-        pred_h_next = model(h_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
+        # 4. Forward pass
+        pred_depth, pred_u, pred_v = model(x_norm, y_norm, t_norm)
         
-        # 4. Measure exact FLUX accuracy (Derivative Supervision)
-        # Because dt=60s, the change in water level is microscopic (e.g. 0.001 meters).
-        # We MUST supervise the derivative directly and multiply by 1000 to prevent the loss from vanishing into 0.000000!
-        dh_pred = pred_h_next[interior_indices] - h_current[interior_indices]
-        dh_true = true_h_next[interior_indices] - h_current[interior_indices]
+        # 5. DATA LOSS (Force model to match the exact water levels from the Teacher)
+        loss_data = F.mse_loss(pred_depth, true_depth_batch)
         
-        loss = F.mse_loss(dh_pred * 1000.0, dh_true * 1000.0)
+        # 6. PHYSICS LOSS (Mass Continuity Equation)
+        # We use PyTorch Autograd to compute exactly how the predicted fields change over space and time.
+        # This infers the hidden (u, v) velocities!
+        dh_dt_norm = torch.autograd.grad(pred_depth, t_norm, grad_outputs=torch.ones_like(pred_depth), create_graph=True)[0]
+        dh_dx_norm = torch.autograd.grad(pred_depth, x_norm, grad_outputs=torch.ones_like(pred_depth), create_graph=True)[0]
+        dh_dy_norm = torch.autograd.grad(pred_depth, y_norm, grad_outputs=torch.ones_like(pred_depth), create_graph=True)[0]
+        
+        du_dx_norm = torch.autograd.grad(pred_u, x_norm, grad_outputs=torch.ones_like(pred_u), create_graph=True)[0]
+        dv_dy_norm = torch.autograd.grad(pred_v, y_norm, grad_outputs=torch.ones_like(pred_v), create_graph=True)[0]
+        
+        # Un-normalize gradients back to physical units (meters/second)
+        dh_dt = dh_dt_norm / t_std / 3600.0 # Convert hours to seconds
+        dh_dx = dh_dx_norm / x_std
+        dh_dy = dh_dy_norm / y_std
+        du_dx = du_dx_norm / x_std
+        dv_dy = dv_dy_norm / y_std
+        
+        # Continuity Residual: dh/dt + d(hu)/dx + d(hv)/dy = 0
+        # Expanded using product rule: dh/dt + h*du/dx + u*dh/dx + h*dv/dy + v*dh/dy = 0
+        physics_residual = dh_dt + pred_depth*du_dx + pred_u*dh_dx + pred_depth*dv_dy + pred_v*dh_dy
+        loss_physics = torch.mean(physics_residual**2)
+        
+        # Total Loss (Weighted to balance magnitudes)
+        loss = loss_data + 1000.0 * loss_physics
         
         loss.backward()
         
@@ -87,7 +95,7 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         scheduler.step()
         
         if epoch % 500 == 0:
-            print(f"Epoch {epoch:5d} | Step {t_idx:4d} | Scaled Flux Loss: {loss.item():.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+            print(f"Epoch {epoch:5d} | Total Loss: {loss.item():.4f} | Data Loss: {loss_data.item():.4f} | Physics Residual: {loss_physics.item():.8f}")
             
     print("Solver Training Complete! Saving weights to 'neural_fvm_best.pth'")
     torch.save(model.state_dict(), "neural_fvm_best.pth")
