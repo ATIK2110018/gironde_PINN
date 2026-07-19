@@ -9,7 +9,9 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
     """
     model.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=50, factor=0.5)
+    # Use StepLR instead of ReduceLROnPlateau so it doesn't accidentally kill the LR
+    # due to the natural stochastic loss fluctuations of the 4-hour window
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
     
     # Calculate exact delta T from the dataset
     dt_seconds = (times_hr[1] - times_hr[0]) * 3600.0
@@ -63,7 +65,13 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
             h_next, latent_next = model(h_current, latent_current, cell_z, cell_friction, cell_areas, edge_index, edge_normals, edge_lengths)
             
             # 4. MEASURE SOLVER ACCURACY ON THE INTERIOR
-            loss = F.mse_loss(h_next[interior_indices], true_h_next[interior_indices])
+            # We use a combined loss: absolute state error + derivative error
+            # Derivative error explicitly prevents the network from learning the lazy "flat" solution
+            state_loss = F.mse_loss(h_next[interior_indices], true_h_next[interior_indices])
+            deriv_loss = F.mse_loss(h_next[interior_indices] - h_current[interior_indices], 
+                                    true_h_next[interior_indices] - h_current[interior_indices])
+            
+            loss = state_loss + 2.0 * deriv_loss
             total_loss += loss
             
             # Update state for next step
@@ -75,7 +83,7 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
-        scheduler.step(total_loss.item())
+        scheduler.step()
         
         if epoch % 50 == 0:
             print(f"Epoch {epoch:4d} | Rollout Loss: {total_loss.item():.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")

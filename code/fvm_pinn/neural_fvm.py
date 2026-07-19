@@ -4,9 +4,9 @@ import torch.nn as nn
 class EdgeNetwork(nn.Module):
     def __init__(self, hidden_dim=64):
         super().__init__()
-        # Inputs: h_L, h_R, z_L, z_R, e_len, nx, ny, latent_L, latent_R
+        # Inputs: h_L, h_R, z_L, z_R, dwl, dz, e_len, nx, ny, latent_L, latent_R
         self.net = nn.Sequential(
-            nn.Linear(7 + hidden_dim*2, hidden_dim),
+            nn.Linear(9 + hidden_dim*2, hidden_dim),
             nn.Tanh(),
             nn.Linear(hidden_dim, hidden_dim),
             nn.Tanh(),
@@ -54,10 +54,16 @@ class NeuralFVMSolver(nn.Module):
         ny = edge_normals[:, 1:2]
         e_len = edge_lengths.view(-1, 1)
         
+        # Calculate strict physical gradients (Gravity driving force!)
+        wl_L = h_L + z_L
+        wl_R = h_R + z_R
+        dwl = wl_R - wl_L
+        dz = z_R - z_L
+        
         # ==========================================
         # 1. GNN Learns Implicit Edge Velocity
         # ==========================================
-        edge_features = torch.cat([h_L, h_R, z_L, z_R, e_len, nx, ny, lat_L, lat_R], dim=1)
+        edge_features = torch.cat([h_L, h_R, z_L, z_R, dwl, dz, e_len, nx, ny, lat_L, lat_R], dim=1)
         
         # Network predicts u_perp (the time-averaged velocity perpendicular to the face)
         # Bounded between -2.0 and 2.0 m/s for absolute stability
