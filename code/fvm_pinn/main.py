@@ -68,7 +68,7 @@ if __name__ == "__main__":
         
         from scipy.interpolate import interp1d
         
-        interp_factor = 6
+        interp_factor = 60
         old_times = np.arange(len(times_hr))
         new_times = np.linspace(0, len(times_hr)-1, len(times_hr)*interp_factor - (interp_factor-1))
         
@@ -76,7 +76,7 @@ if __name__ == "__main__":
         true_wl_matrix = interp_func(new_times)
         times_hr = new_times # Update times_hr to match the new length for plotting
         
-        print(f"Testing on {len(times_hr)} interpolated 10-minute steps.")
+        print(f"Testing on {len(times_hr)} interpolated 1-minute steps.")
         
         # Identify Boundary Nodes for the Test Rollout
         x_min, x_max = cell_coords[:,0].min(), cell_coords[:,0].max()

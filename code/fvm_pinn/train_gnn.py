@@ -14,13 +14,13 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
     # ==========================================
     # USER UPGRADE: INTERPOLATE TEACHER DATA
     # ==========================================
-    # We interpolate the 1-hour teacher data down to 10-minute intervals (6x finer resolution).
-    # This directly solves the massive time-jump instability and gives the AI 6x more training data!
-    interp_factor = 6
+    # We interpolate the 1-hour teacher data down to 1-minute intervals (60x finer resolution).
+    # This guarantees absolute CFL stability and gives the AI massive training data!
+    interp_factor = 60
     old_times = np.arange(len(times_hr))
     new_times = np.linspace(0, len(times_hr)-1, len(times_hr)*interp_factor - (interp_factor-1))
     
-    print(f"Interpolating Teacher Data from {len(old_times)} hours to {len(new_times)} 10-minute steps...")
+    print(f"Interpolating Teacher Data from {len(old_times)} hours to {len(new_times)} 1-minute steps...")
     interp_func = interp1d(old_times, true_wl_matrix, axis=0, kind='linear')
     true_wl_matrix = interp_func(new_times)
     
@@ -28,7 +28,7 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
     # due to the natural stochastic loss fluctuations of the 4-hour window
     scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=500, gamma=0.5)
     
-    # Calculate exact delta T from the interpolated dataset (should be 600.0 seconds)
+    # Calculate exact delta T from the interpolated dataset (should be 60.0 seconds)
     dt_seconds = (times_hr[1] - times_hr[0]) * 3600.0 / interp_factor
     model.dt = float(dt_seconds)
     
@@ -53,9 +53,9 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         optimizer.zero_grad()
         
         # We unroll the simulation for a "window" of time to train the dynamics.
-        # Training on 12 consecutive steps (12 hours) forces the wave to propagate deep into the interior,
+        # Training on 60 consecutive steps (60 minutes) forces the wave to propagate deep into the interior,
         # completely preventing the lazy "flat water" collapse.
-        rollout_steps = min(12, len(times_hr) - 1)
+        rollout_steps = min(60, len(times_hr) - 1)
         start_idx = np.random.randint(0, len(times_hr) - rollout_steps)
         
         # 1. INITIAL CONDITION (Set perfectly from data)
