@@ -74,8 +74,7 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
                 nx = dx / dist
                 ny = dy / dist
                 
-                # Try to get true edge length, fallback to distance between circumcenters
-                edge_len = dist # Fallback approximation
+                edge_len = dist
                 if 'mesh2d_edge_length' in dataset.variables:
                     edge_len = dataset.variables['mesh2d_edge_length'][i]
                 
@@ -88,6 +87,25 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
                 lengths_list.append(edge_len)
                 
     dataset.close()
+    
+    # --- DIMENSIONAL SCALING ---
+    # If the mesh is in Lat/Lon (degrees), we MUST scale areas and lengths to meters!
+    # 1 degree is roughly 111,139 meters.
+    if np.max(np.abs(cell_x)) <= 360.0:
+        print("Detected Lat/Lon coordinate system. Scaling geometric Area and Length to METERS to balance SWE physics.")
+        lat_rad = np.radians(np.mean(cell_y))
+        deg_to_m_y = 111139.0
+        deg_to_m_x = 111139.0 * np.cos(lat_rad)
+        
+        # Scale areas (Area = dx * dy)
+        cell_areas = cell_areas * (deg_to_m_x * deg_to_m_y)
+        
+        # Scale lengths (rough approximation for lengths list)
+        for idx in range(len(lengths_list)):
+            lengths_list[idx] *= np.sqrt(deg_to_m_x * deg_to_m_y)  # Geometric mean scale
+            
+    # CRITICAL: Prevent Division by Zero from microscopic boundary sliver cells
+    cell_areas = np.clip(cell_areas, a_min=10.0, a_max=None)
     
     cell_coords = torch.tensor(np.column_stack((cell_x, cell_y)), dtype=torch.float32, device=device)
     cell_z_t = torch.tensor(cell_z, dtype=torch.float32, device=device)
