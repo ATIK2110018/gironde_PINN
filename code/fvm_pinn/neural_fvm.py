@@ -61,13 +61,22 @@ class NeuralFVMSolver(nn.Module):
         dz = z_R - z_L
         
         # ==========================================
-        # 1. GNN Learns Implicit Edge Velocity
+        # 1. Hybrid Implicit Edge Velocity (Physics + AI)
         # ==========================================
         edge_features = torch.cat([h_L, h_R, z_L, z_R, dwl, dz, e_len, nx, ny, lat_L, lat_R], dim=1)
         
-        # Network predicts u_perp (the time-averaged velocity perpendicular to the face)
-        # Bounded between -2.0 and 2.0 m/s for absolute stability
-        u_perp = torch.tanh(self.edge_net(edge_features)) * 2.0 
+        # AI learns the complex nonlinear residual (Friction, Advection, Coriolis)
+        neural_residual = torch.tanh(self.edge_net(edge_features)) * 1.0 
+        
+        # Strict Newtonian Gravity (Water flows downhill!)
+        # dwl = wl_R - wl_L. If dwl > 0 (Right is higher), water flows Left (negative flux).
+        # Wave speed is roughly proportional to sqrt(g * delta_h)
+        gravity_u = -torch.sign(dwl) * torch.sqrt(9.81 * torch.abs(dwl) + 1e-8)
+        
+        # The final velocity is Gravity + AI correction
+        u_perp = gravity_u + neural_residual
+        # Clamp to prevent supersonic explosions during extreme boundary condition shocks
+        u_perp = torch.clamp(u_perp, min=-3.0, max=3.0)
         
         # Compute Roe Average Depth (Physical Upwinding Geometry)
         h_safe_L = torch.clamp(h_L, min=1e-3)
