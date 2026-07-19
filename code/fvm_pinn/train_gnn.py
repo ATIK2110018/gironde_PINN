@@ -77,7 +77,7 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         
         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
-        scheduler.step(total_loss)
+        scheduler.step(total_loss.item())
         
         if epoch % 50 == 0:
             print(f"Epoch {epoch:4d} | Rollout Loss: {total_loss.item():.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")

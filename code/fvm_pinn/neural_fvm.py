@@ -73,8 +73,11 @@ class NeuralFVMSolver(nn.Module):
         uv_update = self.node_net(node_features)
         
         # Euler Step for velocities
-        u_next = u + uv_update[:, 0:1] * self.dt
-        v_next = v + uv_update[:, 1:2] * self.dt
+        # We apply a tanh bound to prevent the random network initialization from guessing 
+        # supersonic velocities (like 36,000 m/s) which instantly explodes the Riemann solver.
+        # Max velocity change per hour is bounded to +/- 2.0 m/s
+        u_next = u + torch.tanh(uv_update[:, 0:1]) * 2.0
+        v_next = v + torch.tanh(uv_update[:, 1:2]) * 2.0
         
         # ==========================================
         # 2. EXACT FVM Riemann Solver enforces Mass
