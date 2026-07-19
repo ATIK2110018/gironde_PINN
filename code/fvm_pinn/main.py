@@ -26,17 +26,28 @@ def load_delft3d_teacher_data(nc_file_path):
     times_hr = times_sec / 3600.0
     return times_hr, wl_matrix
 
+def find_file(filename_keyword, search_paths=['/kaggle/input', '../data']):
+    for path in search_paths:
+        if os.path.exists(path):
+            for root, dirs, files in os.walk(path):
+                for f in files:
+                    if filename_keyword.lower() in f.lower():
+                        return os.path.join(root, f)
+    return None
+
 if __name__ == "__main__":
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Running on {device}")
     
-    nc_mesh_path = "../data/input/FlowFM_net.nc"
-    map_files = [f for f in os.listdir("../data/output") if 'map.nc' in f.lower()] if os.path.exists("../data/output") else []
+    nc_mesh_path = find_file('flowfm_net.nc')
+    nc_data_path = find_file('map.nc')
     
-    if len(map_files) == 0:
-        print("Error: Could not find Delft3D map.nc file for teacher data. Check paths.")
+    if not nc_mesh_path or not nc_data_path:
+        print("Error: Could not find 'FlowFM_net.nc' or 'map.nc' in /kaggle/input/ or ../data/")
+        print("Please ensure your dataset is attached to the Kaggle notebook!")
     else:
-        nc_data_path = f"../data/output/{map_files[0]}"
+        print(f"Found Mesh: {nc_mesh_path}")
+        print(f"Found Teacher Data: {nc_data_path}")
         
         # 1. Extract Geometry
         cell_coords, cell_z, edge_index, edge_normals = extract_fvm_geometry(nc_mesh_path, device)
