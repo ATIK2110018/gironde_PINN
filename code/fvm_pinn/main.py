@@ -52,8 +52,8 @@ if __name__ == "__main__":
         if fric_path: print(f"Found Friction: {fric_path}")
         else: print("Warning: No friction file found, using default n=0.02")
         
-        # 1. Extract Geometry
-        cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths = extract_fvm_geometry(nc_mesh_path, device)
+        # 1. Extract Geometry directly from the output map file to guarantee shape match
+        cell_coords, cell_z, cell_areas, edge_index, edge_normals, edge_lengths = extract_fvm_geometry(nc_data_path, device)
         
         # Load friction
         if fric_path:
