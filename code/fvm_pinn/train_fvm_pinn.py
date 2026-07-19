@@ -87,7 +87,48 @@ def main():
         boundary_mask=boundary_mask_t
     )
     
-    epochs = 100
+    # ==========================================
+    # PRE-TRAINING PLOTS (Mesh, Depth, Boundaries)
+    # ==========================================
+    os.makedirs('/kaggle/working/outputs', exist_ok=True)
+    plt.figure(figsize=(15, 6))
+    
+    # Subplot 1: Depth (Bed Elevation)
+    plt.subplot(1, 2, 1)
+    sc1 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=cell_z_np, cmap='terrain', s=1)
+    plt.colorbar(sc1, label='Bed Elevation (m)')
+    plt.title("Mesh & Depth (Cell Z)")
+    plt.xlabel("X (m)")
+    plt.ylabel("Y (m)")
+    
+    # Subplot 2: Boundary Lines & Manning's N
+    plt.subplot(1, 2, 2)
+    # Background mesh colored by constant manning's n
+    manning_array = np.full_like(cell_z_np, 0.025)
+    sc2 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=manning_array, cmap='viridis', s=1)
+    plt.colorbar(sc2, label="Manning's n")
+    
+    # Overlay Boundaries
+    plt.scatter(cell_coords_m[port_mask, 0], cell_coords_m[port_mask, 1], c='red', s=10, label='Ocean Boundary')
+    plt.scatter(cell_coords_m[gar_mask, 0], cell_coords_m[gar_mask, 1], c='orange', s=10, label='Garonne Inflow')
+    plt.scatter(cell_coords_m[dor_mask, 0], cell_coords_m[dor_mask, 1], c='magenta', s=10, label='Dordogne Inflow')
+    
+    # Also plot the original .pli line segments to verify exact extraction
+    plt.plot([p1_port[0]*78700, p2_port[0]*78700], [p1_port[1]*111000, p2_port[1]*111000], 'k-', linewidth=2, label='.pli lines')
+    plt.plot([p1_gar[0]*78700, p2_gar[0]*78700], [p1_gar[1]*111000, p2_gar[1]*111000], 'k-', linewidth=2)
+    plt.plot([p1_dor[0]*78700, p2_dor[0]*78700], [p1_dor[1]*111000, p2_dor[1]*111000], 'k-', linewidth=2)
+    
+    plt.title("Boundary Cell Identification & Manning's n")
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig('/kaggle/working/outputs/before_training_mesh.png')
+    plt.close()
+    
+    # ==========================================
+    # TRAIN PINN
+    # ==========================================
+    
+    epochs = 1000  # Increased epochs since each epoch is very fast (10 random steps)
     loss_history_data = []
     loss_history_phys = []
     
@@ -97,7 +138,6 @@ def main():
         epoch_data_loss = 0.0
         epoch_phys_loss = 0.0
         
-        # Randomly sample 10 time steps per epoch for stochastic gradient descent
         sampled_t_indices = np.random.choice(range(len(times_seconds)-1), size=10, replace=False)
         
         for t_idx in sampled_t_indices:
@@ -111,11 +151,10 @@ def main():
         loss_history_data.append(epoch_data_loss)
         loss_history_phys.append(epoch_phys_loss)
         
-        if epoch % 5 == 0:
+        if epoch % 100 == 0:
             print(f"Epoch {epoch}/{epochs} | Data Loss: {epoch_data_loss:.4f} | FVM Physics Loss: {epoch_phys_loss:.4f}")
             
     # Save the trained model
-    os.makedirs('/kaggle/working/outputs', exist_ok=True)
     torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')
     
     # Plot Loss Curve
@@ -129,8 +168,51 @@ def main():
     plt.legend()
     plt.grid(True)
     plt.savefig('/kaggle/working/outputs/fvm_pinn_loss.png')
+    plt.close()
     
-    print("Training Complete! Model and Loss plot saved to /kaggle/working/outputs")
+    # ==========================================
+    # POST-TRAINING TIMESERIES COMPARISON
+    # ==========================================
+    
+    print("Evaluating full timeseries for 3 interior nodes...")
+    trainer.pinn.eval()
+    
+    nodes_to_plot = [5000, 15000, 25000] # Three distinct points in the estuary
+    times_hr = times_seconds / 3600.0
+    
+    # We will build the predicted timeseries by querying the PINN
+    pred_wl = np.zeros((len(times_seconds), len(nodes_to_plot)))
+    
+    with torch.no_grad():
+        for t_idx, t_val in enumerate(times_seconds):
+            norm_t = trainer.get_normalized_t(torch.tensor([t_val], device=device))
+            
+            # Extract coordinates for just the 3 nodes
+            node_coords_m = cell_coords_m[nodes_to_plot]
+            norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
+            
+            # Predict h
+            h_pred, _, _ = trainer.pinn(norm_t, norm_c)
+            # Water level = Depth (h) + Bed Elevation (cell_z)
+            wl_pred = h_pred.cpu().numpy().flatten() + cell_z_np[nodes_to_plot]
+            pred_wl[t_idx, :] = wl_pred
+            
+    plt.figure(figsize=(15, 10))
+    for i, node_id in enumerate(nodes_to_plot):
+        plt.subplot(3, 1, i+1)
+        plt.plot(times_hr, true_wl_matrix[:, node_id], 'k--', label='True SRH-2D Data', linewidth=2)
+        plt.plot(times_hr, pred_wl[:, i], 'r-', label='FVM-PINN Prediction', alpha=0.8, linewidth=2)
+        plt.title(f'Water Level Timeseries at Interior Node {node_id}')
+        plt.xlabel('Time (Hours)')
+        plt.ylabel('Water Level (m)')
+        plt.legend()
+        plt.grid(True)
+        
+    plt.tight_layout()
+    plt.savefig('/kaggle/working/outputs/after_training_timeseries.png')
+    plt.close()
+    
+    print("Training and Evaluation Complete! All plots saved to /kaggle/working/outputs")
 
 if __name__ == "__main__":
     main()
