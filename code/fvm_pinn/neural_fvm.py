@@ -56,16 +56,11 @@ class NeuralFVMSolver(nn.Module):
         
         nx = edge_normals[:, 0:1]
         ny = edge_normals[:, 1:2]
-        e_len = edge_lengths.unsqueeze(1)
+        e_len = edge_lengths.view(-1, 1)
         
         # ==========================================
         # 1. GNN Learns Momentum (Velocities)
         # ==========================================
-        print(f"h_L: {h_L.shape}, h_R: {h_R.shape}")
-        print(f"u_L: {u_L.shape}, u_R: {u_R.shape}")
-        print(f"v_L: {v_L.shape}, v_R: {v_R.shape}")
-        print(f"z_L: {z_L.shape}, z_R: {z_R.shape}")
-        print(f"e_len: {e_len.shape}, nx: {nx.shape}, ny: {ny.shape}")
         edge_features = torch.cat([h_L, h_R, u_L, u_R, v_L, v_R, z_L, z_R, e_len, nx, ny], dim=1)
         edge_messages = self.edge_net(edge_features)
         
