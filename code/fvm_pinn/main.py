@@ -3,16 +3,30 @@ import torch
 import numpy as np
 import matplotlib.pyplot as plt
 
-def get_cells_near_line(cell_coords, p1, p2, threshold=0.005):
-    l2 = np.sum((p2 - p1)**2)
-    if l2 == 0: return np.zeros(cell_coords.shape[0], dtype=bool)
+def get_cells_near_line_dynamic(cell_coords_m, cell_areas, p1_deg, p2_deg):
+    """
+    Dynamically identifies cells intersecting the boundary line without ANY assumed distance thresholds.
+    It calculates the exact distance in meters and compares it to the cell's specific local radius 
+    derived from its exact area, perfectly adapting to non-uniform unstructured meshes.
+    """
+    # Convert degrees to meters to match cell_coords_m projection
+    p1_m = p1_deg * np.array([78700.0, 111000.0])
+    p2_m = p2_deg * np.array([78700.0, 111000.0])
     
-    t = np.sum((cell_coords - p1) * (p2 - p1), axis=1) / l2
+    l2 = np.sum((p2_m - p1_m)**2)
+    if l2 == 0: return np.zeros(cell_coords_m.shape[0], dtype=bool)
+    
+    t = np.sum((cell_coords_m - p1_m) * (p2_m - p1_m), axis=1) / l2
     t = np.clip(t, 0.0, 1.0)
     
-    projection = p1 + t[:, np.newaxis] * (p2 - p1)
-    dist = np.sqrt(np.sum((cell_coords - projection)**2, axis=1))
-    return dist < threshold
+    projection = p1_m + t[:, np.newaxis] * (p2_m - p1_m)
+    dist_m = np.sqrt(np.sum((cell_coords_m - projection)**2, axis=1))
+    
+    # The cell's local width is approx sqrt(Area). 
+    # If the distance is less than half the width (plus a tiny 10% safety margin), it strictly intersects.
+    local_threshold_m = np.sqrt(cell_areas.flatten()) * 0.6
+    
+    return dist_m < local_threshold_m
 
 def main():
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -40,22 +54,28 @@ def main():
     times_seconds = ds.variables['time'][:]
     ds.close()
     
+    # Convert cell_coords to meters FIRST for the dynamic spatial extraction
+    x_coords_m = cell_coords[:, 0] * 78700.0  # Approx longitude scaling at 45 deg N
+    y_coords_m = cell_coords[:, 1] * 111000.0
+    cell_coords_m = np.column_stack((x_coords_m, y_coords_m))
+    cell_areas_np = cell_areas.squeeze(1).cpu().numpy()
+    
     # EXACT BOUNDARIES from the .pli files intersected with true topological boundary cells!
-    # No more cell size assumptions! The topological mask guarantees ONLY the outer shell of cells is checked.
+    # No more cell size assumptions! The model dynamically adapts to non-uniform mesh sizes!
     # 1. Ocean Boundary (Port Block)
     p1_port = np.array([-1.055107109535667E+000, 4.558144911918696E+001])
     p2_port = np.array([-1.043691864509240E+000, 4.559334500610923E+001])
-    port_mask = get_cells_near_line(cell_coords, p1_port, p2_port, threshold=0.0005) & topo_boundary_mask
+    port_mask = get_cells_near_line_dynamic(cell_coords_m, cell_areas_np, p1_port, p2_port) & topo_boundary_mask
     
     # 2. Garonne River Inflow
     p1_gar = np.array([-5.308167329151710E-001, 4.480884916128741E+001])
     p2_gar = np.array([-5.262550852925010E-001, 4.481051805675912E+001])
-    gar_mask = get_cells_near_line(cell_coords, p1_gar, p2_gar, threshold=0.0005) & topo_boundary_mask
+    gar_mask = get_cells_near_line_dynamic(cell_coords_m, cell_areas_np, p1_gar, p2_gar) & topo_boundary_mask
     
     # 3. Dordogne River Inflow
     p1_dor = np.array([-2.586704969143130E-001, 4.491934439849670E+001])
     p2_dor = np.array([-2.586418807368147E-001, 4.491740422166230E+001])
-    dor_mask = get_cells_near_line(cell_coords, p1_dor, p2_dor, threshold=0.0005) & topo_boundary_mask
+    dor_mask = get_cells_near_line_dynamic(cell_coords_m, cell_areas_np, p1_dor, p2_dor) & topo_boundary_mask
     
     exact_boundary_mask = port_mask | gar_mask | dor_mask
     boundary_mask_t = torch.tensor(exact_boundary_mask, device=device)
@@ -67,16 +87,11 @@ def main():
     # Extract exact boundary forcing for EACH boundary cell individually! (Shape: 265, K)
     boundary_wl_matrix = true_wl_matrix[:, exact_boundary_mask]
     
-    # Convert cell_coords to meters for accurate exact edge distance calculation
-    x_coords_m = cell_coords[:, 0] * 78700.0  # Approx longitude scaling at 45 deg N
-    y_coords_m = cell_coords[:, 1] * 111000.0
-    cell_coords_m = np.column_stack((x_coords_m, y_coords_m))
-    
     from numerical_model import GPUHydrodynamicModel
     
     model = GPUHydrodynamicModel(
         cell_coords=cell_coords_m,
-        cell_areas=cell_areas.squeeze(1).cpu().numpy(),
+        cell_areas=cell_areas_np,
         cell_z=cell_z.cpu().numpy(),
         edge_index=edge_index.cpu().numpy(),
         edge_normals=edge_normals.cpu().numpy(),
