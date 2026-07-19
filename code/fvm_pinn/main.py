@@ -90,7 +90,7 @@ if __name__ == "__main__":
             for t in times_hr:
                 x = cell_coords[node_idx, 0:1].unsqueeze(0).to(device)
                 y = cell_coords[node_idx, 1:2].unsqueeze(0).to(device)
-                t_tensor = torch.tensor([[t * 3600.0]], device=device)
+                t_tensor = torch.tensor([[t * 3600.0]], dtype=torch.float32, device=device)
                 xi, _, _ = model(x, y, t_tensor)
                 pred_wl.append(xi.item())
         
