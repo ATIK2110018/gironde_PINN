@@ -1,4 +1,10 @@
 import os
+try:
+    import netCDF4
+except ImportError:
+    print("Installing netCDF4...")
+    os.system('pip install -q netCDF4')
+
 import torch
 import numpy as np
 import netCDF4 as nc
