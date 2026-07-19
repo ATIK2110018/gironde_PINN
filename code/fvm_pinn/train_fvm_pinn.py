@@ -125,40 +125,58 @@ def main():
     plt.close()
     
     # ==========================================
-    # TRAIN PINN (Sequential Time-Marching)
+    # INTERPOLATE DATA TO 1-MINUTE TIME STEPS
+    # ==========================================
+    print("Interpolating data to 1-minute (60s) intervals for continuous sequential training...")
+    from scipy.interpolate import interp1d
+    interp_func = interp1d(times_seconds, true_wl_matrix, axis=0, kind='linear')
+    
+    t_train_array = np.arange(times_seconds[0], times_seconds[-1] + 60, 60)
+    
+    # Clip to avoid floating point overshoot
+    t_train_array = t_train_array[t_train_array <= times_seconds[-1]]
+    
+    true_wl_interp = interp_func(t_train_array)
+    
+    # Update trainer with the new 1-minute resolution data
+    trainer.times_seconds = torch.tensor(t_train_array, dtype=torch.float32, device=device)
+    trainer.true_wl_matrix = torch.tensor(true_wl_interp, dtype=torch.float32, device=device)
+    
+    # ==========================================
+    # TRAIN PINN (Sequential 1-Minute Time-Marching)
     # ==========================================
     
     loss_history_data = []
     loss_history_phys = []
     
-    print("Starting Sequential Time-Marching Training...")
+    print(f"Starting Sequential Time-Marching Training for {len(t_train_array)} steps (1 step = 1 minute)...")
     
-    # We step through time chronologically (Causality)
-    for t_idx in range(len(times_seconds) - 1):
+    # We step through time chronologically every minute
+    for t_idx in range(len(t_train_array) - 1):
         
         epoch_data = 0.0
         epoch_phys = 0.0
         
-        # 1. Train heavily on the new time front
-        for _ in range(15):
+        # 1. Train heavily on the new 1-minute time front
+        for _ in range(5): # Reduced from 15 to 5 since 1-minute steps are very close together
             d_loss, p_loss = trainer.train_step(t_idx)
             epoch_data += d_loss
             epoch_phys += p_loss
             
         # 2. Replay Memory: Sample past time steps to prevent Catastrophic Forgetting
         if t_idx > 0:
-            past_indices = np.random.choice(range(t_idx), size=min(t_idx, 5), replace=False)
+            past_indices = np.random.choice(range(t_idx), size=min(t_idx, 3), replace=False)
             for past_idx in past_indices:
                 trainer.train_step(past_idx)
                 
-        epoch_data /= 15
-        epoch_phys /= 15
+        epoch_data /= 5
+        epoch_phys /= 5
         
         loss_history_data.append(epoch_data)
         loss_history_phys.append(epoch_phys)
         
-        if t_idx % 5 == 0:
-            print(f"Time Step {t_idx}/{len(times_seconds)-1} | Time: {times_seconds[t_idx]/3600:.1f} hr | Data Loss: {epoch_data:.4f} | Phys Loss: {epoch_phys:.4f}")
+        if t_idx % 60 == 0: # Print every 60 minutes (1 hour)
+            print(f"Time Step {t_idx}/{len(t_train_array)-1} | Time: {t_train_array[t_idx]/3600:.1f} hr | Data Loss: {epoch_data:.4f} | Phys Loss: {epoch_phys:.4f}")
             
     # Save the trained model
     torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')
