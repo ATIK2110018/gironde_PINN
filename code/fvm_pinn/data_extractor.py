@@ -37,8 +37,24 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
     if 'mesh2d_face_area' in dataset.variables:
         cell_areas = dataset.variables['mesh2d_face_area'][:]
     else:
-        print("Warning: cell areas not found, defaulting to 1.0. For publication, please ensure mesh2d_face_area exists.")
-        cell_areas = np.ones_like(cell_x)
+        print("Warning: mesh2d_face_area not found. Calculating exact polygon areas using Shoelace formula...")
+        if 'mesh2d_face_nodes' in dataset.variables and 'mesh2d_node_x' in dataset.variables:
+            face_nodes = dataset.variables['mesh2d_face_nodes'][:]
+            node_x = dataset.variables['mesh2d_node_x'][:]
+            node_y = dataset.variables['mesh2d_node_y'][:]
+            cell_areas = np.zeros(len(cell_x))
+            for c in range(len(cell_x)):
+                nodes = face_nodes[c, :] if len(face_nodes.shape) > 1 else [face_nodes[c]]
+                # Filter out masked values (-1, etc)
+                valid_nodes = [int(n)-1 for n in nodes if not np.ma.is_masked(n) and int(n) > 0]
+                if len(valid_nodes) >= 3:
+                    px = node_x[valid_nodes]
+                    py = node_y[valid_nodes]
+                    cell_areas[c] = 0.5 * np.abs(np.dot(px, np.roll(py, -1)) - np.dot(py, np.roll(px, -1)))
+                else:
+                    cell_areas[c] = 1.0 # Fallback
+        else:
+            cell_areas = np.ones_like(cell_x)
         
     num_cells = len(cell_x)
     
