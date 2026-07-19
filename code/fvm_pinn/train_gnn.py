@@ -38,8 +38,9 @@ def train_neural_fvm(model, cell_coords, cell_z, cell_areas, edge_index, edge_no
         optimizer.zero_grad()
         
         # We unroll the simulation for a "window" of time to train the dynamics.
-        # Training on 4 consecutive steps (e.g. 4 hours)
-        rollout_steps = min(4, len(times_hr) - 1)
+        # Training on 12 consecutive steps (12 hours) forces the wave to propagate deep into the interior,
+        # completely preventing the lazy "flat water" collapse.
+        rollout_steps = min(12, len(times_hr) - 1)
         start_idx = np.random.randint(0, len(times_hr) - rollout_steps)
         
         # 1. INITIAL CONDITION (Set perfectly from data)
