@@ -62,10 +62,17 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
     normals_list = []
     lengths_list = []
     
+    topological_boundary_cells = set()
+    
     for i in range(edge_cells.shape[0] if len(edge_cells.shape) == 2 else edge_cells.shape[1]):
         c1 = int(edge_cells[i, 0]) - 1 if len(edge_cells.shape) == 2 else int(edge_cells[0, i]) - 1
         c2 = int(edge_cells[i, 1]) - 1 if len(edge_cells.shape) == 2 else int(edge_cells[1, i]) - 1
         
+        if c1 >= 0 and c2 < 0:
+            topological_boundary_cells.add(c1)
+        elif c2 >= 0 and c1 < 0:
+            topological_boundary_cells.add(c2)
+            
         if c1 >= 0 and c2 >= 0:
             dx = cell_x[c2] - cell_x[c1]
             dy = cell_y[c2] - cell_y[c1]
@@ -87,6 +94,9 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
                 lengths_list.append(edge_len)
                 
     dataset.close()
+    
+    topo_boundary_mask = np.zeros(num_cells, dtype=bool)
+    topo_boundary_mask[list(topological_boundary_cells)] = True
     
     # --- DIMENSIONAL SCALING ---
     # If the mesh is in Lat/Lon (degrees), we MUST scale areas and lengths to meters!
@@ -116,7 +126,7 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
     edge_lengths_t = torch.tensor(lengths_list, dtype=torch.float32, device=device).unsqueeze(1)
     
     print(f"Extracted {num_cells} FVM cells and {edge_index.size(1)//2} internal faces.")
-    return cell_coords, cell_z_t, cell_areas_t, edge_index, edge_normals, edge_lengths_t
+    return cell_coords, cell_z_t, cell_areas_t, edge_index, edge_normals, edge_lengths_t, topo_boundary_mask
 
 def load_friction_xyz(filepath, cell_coords, device='cpu'):
     # Loads Manning's n from frictioncoefficient.xyz

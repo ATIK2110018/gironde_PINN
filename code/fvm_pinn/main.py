@@ -20,7 +20,7 @@ def main():
     
     from data_extractor import extract_fvm_geometry
     print("Extracting FVM Geometry from /kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc...")
-    cell_coords_t, cell_z, cell_areas, edge_index, edge_normals, edge_lengths = extract_fvm_geometry("/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc", device=device)
+    cell_coords_t, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, topo_boundary_mask = extract_fvm_geometry("/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc", device=device)
     cell_coords = cell_coords_t.cpu().numpy()
     
     import netCDF4 as nc
@@ -40,21 +40,22 @@ def main():
     times_seconds = ds.variables['time'][:]
     ds.close()
     
-    # EXACT BOUNDARIES from the .pli files
+    # EXACT BOUNDARIES from the .pli files intersected with true topological boundary cells!
+    # No more cell size assumptions! The topological mask guarantees ONLY the outer shell of cells is checked.
     # 1. Ocean Boundary (Port Block)
     p1_port = np.array([-1.055107109535667E+000, 4.558144911918696E+001])
     p2_port = np.array([-1.043691864509240E+000, 4.559334500610923E+001])
-    port_mask = get_cells_near_line(cell_coords, p1_port, p2_port, threshold=0.0005)
+    port_mask = get_cells_near_line(cell_coords, p1_port, p2_port, threshold=0.01) & topo_boundary_mask
     
     # 2. Garonne River Inflow
     p1_gar = np.array([-5.308167329151710E-001, 4.480884916128741E+001])
     p2_gar = np.array([-5.262550852925010E-001, 4.481051805675912E+001])
-    gar_mask = get_cells_near_line(cell_coords, p1_gar, p2_gar, threshold=0.0005)
+    gar_mask = get_cells_near_line(cell_coords, p1_gar, p2_gar, threshold=0.01) & topo_boundary_mask
     
     # 3. Dordogne River Inflow
     p1_dor = np.array([-2.586704969143130E-001, 4.491934439849670E+001])
     p2_dor = np.array([-2.586418807368147E-001, 4.491740422166230E+001])
-    dor_mask = get_cells_near_line(cell_coords, p1_dor, p2_dor, threshold=0.0005)
+    dor_mask = get_cells_near_line(cell_coords, p1_dor, p2_dor, threshold=0.01) & topo_boundary_mask
     
     exact_boundary_mask = port_mask | gar_mask | dor_mask
     boundary_mask_t = torch.tensor(exact_boundary_mask, device=device)
