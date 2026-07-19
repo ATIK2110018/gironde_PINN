@@ -8,7 +8,7 @@ class FourierFeatures(nn.Module):
     Random Fourier Feature Mapping (Positional Encoding)
     Shatters the Spectral Bias so the network can learn high-frequency tidal waves.
     """
-    def __init__(self, in_features=3, out_features=128, sigma=2.0):
+    def __init__(self, in_features=3, out_features=128, sigma=30.0):
         super().__init__()
         self.out_features = out_features
         # Fixed random matrix for projection
@@ -26,7 +26,7 @@ class HydroPINN(nn.Module):
     def __init__(self):
         super(HydroPINN, self).__init__()
         
-        self.fourier = FourierFeatures(in_features=3, out_features=128, sigma=2.0)
+        self.fourier = FourierFeatures(in_features=3, out_features=128, sigma=30.0)
         
         self.net = nn.Sequential(
             nn.Linear(128, 256),
