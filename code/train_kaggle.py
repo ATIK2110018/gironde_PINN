@@ -409,3 +409,73 @@ if __name__ == "__main__":
             print(f"--> Saved new best model! (Epoch Loss: {best_loss:.2f})")
 
     print("Training Complete!")
+    
+    # ==========================================
+    # 4. TIMESERIES VALIDATION PLOT
+    # ==========================================
+    node_idx = 5000 
+    print(f"Loading BEST trained model and extracting timeseries for Node {node_idx}...")
+    
+    model.load_state_dict(torch.load("pignn_weights_best.pth", weights_only=True))
+    model.eval()
+    
+    current_time = 0.0
+    state_t = torch.zeros((num_nodes, 6), dtype=torch.float32).to(device)
+    state_t[:, 0] = torch.clamp(torch.tensor(0.0, device=device), min=node_z + 0.1)
+    state_t[:, 3] = node_z
+    state_t[:, 4] = friction
+    
+    pred_times = []
+    pred_wl = []
+    true_wl_list = []
+    
+    print("Running autoregressive simulation (this will be fast)...")
+    with torch.no_grad():
+        while current_time < max_time:
+            target_port_wl = get_interp_val(current_time + dt, t_port, v_port)
+            target_gar_q = get_interp_val(current_time + dt, t_garonne, v_garonne) * 0.001
+            target_dor_q = get_interp_val(current_time + dt, t_dordogne, v_dordogne) * 0.001
+            
+            state_t[:, 5] = 0.0
+            state_t[bnd_port, 5] = torch.tensor(target_port_wl, dtype=torch.float32, device=device).expand(len(bnd_port))
+            state_t[bnd_garonne, 5] = torch.tensor(target_gar_q, dtype=torch.float32, device=device).expand(len(bnd_garonne))
+            state_t[bnd_dordogne, 5] = torch.tensor(target_dor_q, dtype=torch.float32, device=device).expand(len(bnd_dordogne))
+            state_t[bnd_port, 0] = torch.tensor(target_port_wl, dtype=torch.float32, device=device).expand(len(bnd_port))
+            
+            state_t_next = model(state_t, edge_index, edge_attr)
+            
+            pred_times.append(current_time / 3600.0)
+            pred_wl.append(state_t_next[node_idx, 0].item())
+            
+            if has_truth_data:
+                t_target = current_time + dt
+                if t_target <= true_times[0]:
+                    target_eta = true_eta[0][node_idx].item()
+                elif t_target >= true_times[-1]:
+                    target_eta = true_eta[-1][node_idx].item()
+                else:
+                    idx2 = np.searchsorted(true_times, t_target)
+                    idx1 = idx2 - 1
+                    t1, t2 = true_times[idx1], true_times[idx2]
+                    w = (t_target - t1) / (t2 - t1 + 1e-8)
+                    target_eta = ((1 - w) * true_eta[idx1][node_idx] + w * true_eta[idx2][node_idx]).item()
+                    
+                true_wl_list.append(target_eta)
+            
+            state_t[:, :3] = state_t_next.clone()
+            current_time += dt
+            
+    print("Simulation complete! Plotting and saving...")
+    
+    if has_truth_data:
+        plt.figure(figsize=(14, 6))
+        plt.plot(pred_times, true_wl_list, 'b-', label='True Water Level (Delft3D)', linewidth=2)
+        plt.plot(pred_times, pred_wl, 'r--', label='Predicted Water Level (Best Epoch)', linewidth=2)
+        plt.title(f"Best Epoch Water Level Memorization Comparison (Node {node_idx})")
+        plt.xlabel("Time (hours)")
+        plt.ylabel("Water Level (m)")
+        plt.legend()
+        plt.grid(True)
+        plt.savefig("timeseries_validation.png")
+        print("Saved timeseries_validation.png!")
+        plt.show()
