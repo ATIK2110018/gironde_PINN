@@ -20,8 +20,8 @@ def main():
     # Define Boundary Nodes (Ocean is at the West end of the Gironde Estuary, i.e., minimum Longitude X)
     x_coords = cell_coords[:, 0]
     x_min = torch.min(x_coords)
-    # Select cells within a small margin of the western-most edge as the tidal boundary
-    boundary_mask = (x_coords < x_min + 0.05)
+    # Select cells within a small margin of the western-most edge as the tidal boundary (0.005 degrees ~ 400m thick)
+    boundary_mask = (x_coords < x_min + 0.005)
     
     print(f"Identified {torch.sum(boundary_mask).item()} boundary cells at the ocean mouth.")
     
