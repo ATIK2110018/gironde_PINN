@@ -13,7 +13,22 @@ def extract_fvm_geometry(nc_file_path, device='cpu'):
     if 'mesh2d_face_x' in dataset.variables:
         cell_x = dataset.variables['mesh2d_face_x'][:]
         cell_y = dataset.variables['mesh2d_face_y'][:]
-        cell_z = dataset.variables['mesh2d_face_z'][:] if 'mesh2d_face_z' in dataset.variables else np.zeros_like(cell_x)
+        
+        # Check for face_z first, otherwise average the node_z values
+        if 'mesh2d_face_z' in dataset.variables:
+            cell_z = dataset.variables['mesh2d_face_z'][:]
+        elif 'mesh2d_node_z' in dataset.variables and 'mesh2d_face_nodes' in dataset.variables:
+            node_z = dataset.variables['mesh2d_node_z'][:]
+            face_nodes = dataset.variables['mesh2d_face_nodes'][:]
+            cell_z = np.zeros_like(cell_x)
+            for c in range(len(cell_x)):
+                nodes = face_nodes[c, :] if len(face_nodes.shape) > 1 else [face_nodes[c]]
+                valid_nodes = [int(n)-1 for n in nodes if not np.ma.is_masked(n) and int(n) > 0]
+                if len(valid_nodes) > 0:
+                    cell_z[c] = np.mean(node_z[valid_nodes])
+        else:
+            cell_z = np.zeros_like(cell_x)
+            
         if 'mesh2d_edge_faces' in dataset.variables:
             edge_cells = dataset.variables['mesh2d_edge_faces'][:]
             edge_cells = np.ma.filled(edge_cells, -1)
