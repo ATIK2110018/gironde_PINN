@@ -55,10 +55,15 @@ def main():
     # Extract exact boundary forcing for EACH boundary cell individually! (Shape: 265, K)
     boundary_wl_matrix = true_wl_matrix[:, exact_boundary_mask]
     
+    # Convert cell_coords to meters for accurate exact edge distance calculation
+    x_coords_m = cell_coords[:, 0] * 78700.0  # Approx longitude scaling at 45 deg N
+    y_coords_m = cell_coords[:, 1] * 111000.0
+    cell_coords_m = np.column_stack((x_coords_m, y_coords_m))
+    
     from numerical_model import GPUHydrodynamicModel
     
     model = GPUHydrodynamicModel(
-        cell_coords=cell_coords,
+        cell_coords=cell_coords_m,
         cell_areas=cell_areas.squeeze(1).cpu().numpy(),
         cell_z=cell_z.cpu().numpy(),
         edge_index=edge_index.cpu().numpy(),

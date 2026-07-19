@@ -21,6 +21,10 @@ class GPUHydrodynamicModel:
         self.ny = torch.tensor(edge_normals[:, 1:2], dtype=torch.float32, device=device)
         self.e_len = torch.tensor(edge_lengths, dtype=torch.float32, device=device).unsqueeze(1)
         
+        # Center-to-center distances for exact CFL calculation
+        c_coords = torch.tensor(cell_coords, dtype=torch.float32, device=device)
+        self.d_LR = torch.norm(c_coords[self.c_R] - c_coords[self.c_L], dim=1)
+        
         self.boundary_mask = boundary_mask
         self.num_cells = cell_areas.shape[0]
         
@@ -44,35 +48,30 @@ class GPUHydrodynamicModel:
         current_time = times_seconds[0]
         output_idx = 0
         
-        # Approx minimum dx for CFL
-        min_dx = torch.min(torch.sqrt(self.cell_areas))
-        
         dt = 0.0  # Initialize dt for the very first print statement at t=0
         
         while output_idx < len(times_seconds):
             target_time = times_seconds[output_idx]
             
             while current_time < target_time:
-                # 2. Dynamic CFL Time-Stepping
-                c = torch.sqrt(self.g * h)
-                vel_mag = torch.sqrt(u**2 + v**2)
-                max_speed = torch.max(vel_mag + c)
-                
-                # CFL = 0.4 (Strictly stable for explicit FVM)
-                dynamic_dt = 0.4 * min_dx / max_speed
-                # Clip to prevent overshooting the target output time (allow small dt for stability)
-                dt = torch.clamp(dynamic_dt, min=1e-4, max=target_time - current_time).item()
-                
-                # 3. Riemann Solver for Edge Fluxes
+                # 3. Riemann Solver for Edge Fluxes (Must compute fluxes before finding local dt)
                 h_L, h_R = h[self.c_L], h[self.c_R]
                 u_L, u_R = u[self.c_L], u[self.c_R]
                 v_L, v_R = v[self.c_L], v[self.c_R]
                 h_still_L, h_still_R = h_still[self.c_L], h_still[self.c_R]
                 
-                F_mass, F_mom_x, F_mom_y = roe_flux_2d(
+                F_mass, F_mom_x, F_mom_y, wave_speed = roe_flux_2d(
                     h_L, h_R, u_L, u_R, v_L, v_R, 
                     h_still_L, h_still_R, self.nx, self.ny, self.g
                 )
+                
+                # Exact edge-based CFL calculation!
+                # dt = 0.4 * (distance between cells) / (wave speed on that edge)
+                edge_dt = 0.4 * self.d_LR.unsqueeze(1) / wave_speed
+                dynamic_dt = torch.min(edge_dt).item()
+                
+                # Clip to prevent overshooting the target output time (allow small dt for stability)
+                dt = torch.clamp(torch.tensor(dynamic_dt), min=1e-4, max=target_time - current_time).item()
                 
                 # Multiply flux by edge lengths
                 F_mass *= self.e_len

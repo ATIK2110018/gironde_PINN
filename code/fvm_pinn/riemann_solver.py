@@ -55,4 +55,4 @@ def roe_flux_2d(h_L, h_R, u_L, u_R, v_L, v_R, h_still_L, h_still_R, nx, ny, g=9.
     F_mom_x = 0.5 * (F_mom_x_L + F_mom_x_R) - diss_mom_x
     F_mom_y = 0.5 * (F_mom_y_L + F_mom_y_R) - diss_mom_y
     
-    return F_mass, F_mom_x, F_mom_y
+    return F_mass, F_mom_x, F_mom_y, wave_speed
