@@ -23,8 +23,9 @@ def get_cells_near_line_dynamic(cell_coords_m, cell_areas, p1_deg, p2_deg):
     dist_m = np.sqrt(np.sum((cell_coords_m - projection)**2, axis=1))
     
     # The cell's local width is approx sqrt(Area). 
-    # If the distance is less than half the width (plus a tiny 10% safety margin), it strictly intersects.
-    local_threshold_m = np.sqrt(cell_areas.flatten()) * 0.6
+    # Since cell centers are half a cell-width inside the domain, and cells can be highly stretched rectangles,
+    # we use a multiplier of 2.0 to safely capture the cross-section cells without grabbing distant river banks.
+    local_threshold_m = np.sqrt(cell_areas.flatten()) * 2.0
     
     return dist_m < local_threshold_m
 
