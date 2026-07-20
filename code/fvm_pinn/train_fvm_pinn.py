@@ -161,8 +161,9 @@ def main():
         epoch_bc = 0.0
         epoch_phys = 0.0
         
-        # 1. Train heavily on the new 1-minute time front
-        for _ in range(5):
+        # 1. Train on the new 1-minute time front
+        # Reduced from 5 to 3 passes to speed up training time
+        for _ in range(3):
             int_loss, bc_loss, p_loss = trainer.train_step(t_idx)
             epoch_int += int_loss
             epoch_bc += bc_loss
@@ -173,13 +174,14 @@ def main():
         # reminding it of the past, it violently overwrites its weights to fit the current minute, 
         # completely destroying its memory of all previous hours (Catastrophic Forgetting).
         if t_idx > 0:
-            past_indices = np.random.choice(range(t_idx), size=min(t_idx, 3), replace=False)
+            # Reduced from 3 to 2 random past samples to speed up training
+            past_indices = np.random.choice(range(t_idx), size=min(t_idx, 2), replace=False)
             for past_idx in past_indices:
                 trainer.train_step(past_idx)
             
-        epoch_int /= 5
-        epoch_bc /= 5
-        epoch_phys /= 5
+        epoch_int /= 3
+        epoch_bc /= 3
+        epoch_phys /= 3
         
         loss_history_data.append(epoch_int + epoch_bc)
         loss_history_phys.append(epoch_phys)
