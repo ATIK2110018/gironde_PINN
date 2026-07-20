@@ -152,44 +152,50 @@ def main():
     loss_history_data = []
     loss_history_phys = []
     
-    print(f"Starting Sequential Time-Marching Training for {len(t_train_array)} steps (1 step = 1 minute)...")
+    # =========================================================================
+    # GROWING TIME-WINDOW GLOBAL TRAINING (High Accuracy & No Error Accumulation)
+    # =========================================================================
+    num_windows = 5
+    iters_per_window = 8000
+    total_t_steps = len(t_train_array)
+    window_step_size = total_t_steps // num_windows
     
-    # We step through time chronologically every minute
-    for t_idx in range(len(t_train_array) - 1):
+    print(f"Starting Growing Time-Window Training ({num_windows} Windows, {iters_per_window} iterations per window)...")
+    
+    for w in range(1, num_windows + 1):
+        # Current max time index for this growing window
+        max_idx = min(w * window_step_size, total_t_steps - 1)
         
-        epoch_int = 0.0
-        epoch_bc = 0.0
-        epoch_phys = 0.0
+        print(f"\n--- Starting Time Window {w}/{num_windows} (Hours 0.0 to {t_train_array[max_idx]/3600.0:.1f}) ---")
         
-        # 1. Train on the new 1-minute time front
-        # Reduced from 5 to 3 passes to speed up training time
-        for _ in range(3):
+        window_int_loss = 0.0
+        window_bc_loss = 0.0
+        window_phys_loss = 0.0
+        
+        for i in range(1, iters_per_window + 1):
+            # Global Time Sampling: Randomly sample ANY time step within the current growing window
+            t_idx = np.random.randint(0, max_idx + 1)
+            
             int_loss, bc_loss, p_loss = trainer.train_step(t_idx)
-            epoch_int += int_loss
-            epoch_bc += bc_loss
-            epoch_phys += p_loss
             
-        # 2. CRITICAL FIX: Replay Memory
-        # A neural network uses a global weight matrix. If we just march forward in time without 
-        # reminding it of the past, it violently overwrites its weights to fit the current minute, 
-        # completely destroying its memory of all previous hours (Catastrophic Forgetting).
-        if t_idx > 0:
-            # Reduced from 3 to 2 random past samples to speed up training
-            past_indices = np.random.choice(range(t_idx), size=min(t_idx, 2), replace=False)
-            for past_idx in past_indices:
-                trainer.train_step(past_idx)
+            window_int_loss += int_loss
+            window_bc_loss += bc_loss
+            window_phys_loss += p_loss
             
-        epoch_int /= 3
-        epoch_bc /= 3
-        epoch_phys /= 3
-        
-        loss_history_data.append(epoch_int + epoch_bc)
-        loss_history_phys.append(epoch_phys)
-        
-        if t_idx % 60 == 0:
-            # At step 0, the Interior Data is the Initial Condition (IC). For all other steps, it's the standard Data.
-            data_label = "IC Loss" if t_idx == 0 else "Data Loss"
-            print(f"Time Step {t_idx}/{len(t_train_array)-1} | Time: {t_train_array[t_idx]/3600.0:.1f} hr | {data_label}: {epoch_int:.4f} | BC Loss: {epoch_bc:.4f} | Phys Loss: {epoch_phys:.4f}")
+            if i % 1000 == 0:
+                avg_int = window_int_loss / 1000
+                avg_bc = window_bc_loss / 1000
+                avg_phys = window_phys_loss / 1000
+                
+                loss_history_data.append(avg_int + avg_bc)
+                loss_history_phys.append(avg_phys)
+                
+                print(f"Window {w} | Iter {i}/{iters_per_window} | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
+                
+                # Reset accumulators for next print
+                window_int_loss = 0.0
+                window_bc_loss = 0.0
+                window_phys_loss = 0.0
             
     # Save the trained model
     torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')
