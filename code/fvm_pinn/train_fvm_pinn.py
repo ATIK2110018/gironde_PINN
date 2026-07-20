@@ -157,13 +157,15 @@ def main():
     # We step through time chronologically every minute
     for t_idx in range(len(t_train_array) - 1):
         
-        epoch_data = 0.0
+        epoch_int = 0.0
+        epoch_bc = 0.0
         epoch_phys = 0.0
         
         # 1. Train heavily on the new 1-minute time front
         for _ in range(5):
-            d_loss, p_loss = trainer.train_step(t_idx)
-            epoch_data += d_loss
+            int_loss, bc_loss, p_loss = trainer.train_step(t_idx)
+            epoch_int += int_loss
+            epoch_bc += bc_loss
             epoch_phys += p_loss
             
         # 2. CRITICAL FIX: Replay Memory
@@ -175,14 +177,17 @@ def main():
             for past_idx in past_indices:
                 trainer.train_step(past_idx)
             
-        epoch_data /= 5
+        epoch_int /= 5
+        epoch_bc /= 5
         epoch_phys /= 5
         
-        loss_history_data.append(epoch_data)
+        loss_history_data.append(epoch_int + epoch_bc)
         loss_history_phys.append(epoch_phys)
         
-        if t_idx % 60 == 0: # Print every 60 minutes (1 hour)
-            print(f"Time Step {t_idx}/{len(t_train_array)-1} | Time: {t_train_array[t_idx]/3600:.1f} hr | Data Loss: {epoch_data:.4f} | Phys Loss: {epoch_phys:.4f}")
+        if t_idx % 60 == 0:
+            # At step 0, the Interior Data is the Initial Condition (IC). For all other steps, it's the standard Data.
+            data_label = "IC Loss" if t_idx == 0 else "Data Loss"
+            print(f"Time Step {t_idx}/{len(t_train_array)-1} | Time: {t_train_array[t_idx]/3600.0:.1f} hr | {data_label}: {epoch_int:.4f} | BC Loss: {epoch_bc:.4f} | Phys Loss: {epoch_phys:.4f}")
             
     # Save the trained model
     torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')

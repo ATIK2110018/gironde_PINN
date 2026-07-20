@@ -127,22 +127,19 @@ class FVMPINNTrainer:
         loss_data_interior = nn.MSELoss()(wl_curr[self.interior_mask], true_h[self.interior_mask])
         
         # We heavily weight the boundary condition so the wave is forced into the domain
-        # CRITICAL FIX: We MUST also heavily weight the interior data loss! 
-        # If we don't, the network predicts h=0 (dry bed) in the interior to keep the physics loss at 0.0, 
-        # resulting in a flatline at the bed elevation.
-        data_loss = 100.0 * loss_data_interior + 100.0 * loss_data_boundary
+        # Updated to match HydroNet standards: BC=30, Data=10
+        data_loss = 10.0 * loss_data_interior + 30.0 * loss_data_boundary
         
         # 2. Evaluate Exact FVM Physics Loss
         phys_loss = self.compute_physics_loss(t_val, dt=1.0)
         
         # 3. Step Optimizer
-        # The Physics Loss must be strictly enforced so the network doesn't ignore the Shallow Water Equations.
-        # Since Data Loss is ~100, we scale Physics Loss by 100 to balance the gradient tug-of-war!
-        total_loss = data_loss + 100.0 * phys_loss
+        # Updated to match HydroNet standards: FVM=2.0
+        total_loss = data_loss + 2.0 * phys_loss
         total_loss.backward()
         
         # Gradient clipping stabilizes stiff FVM gradients
         torch.nn.utils.clip_grad_norm_(self.pinn.parameters(), 1.0)
         self.optimizer.step()
         
-        return data_loss.item(), phys_loss.item()
+        return loss_data_interior.item(), loss_data_boundary.item(), phys_loss.item()
