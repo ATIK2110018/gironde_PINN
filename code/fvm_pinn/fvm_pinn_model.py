@@ -120,8 +120,11 @@ class FVMPINNTrainer:
         loss_data_boundary = nn.MSELoss()(wl_curr[self.boundary_mask], true_h[self.boundary_mask])
         loss_data_interior = nn.MSELoss()(wl_curr[self.interior_mask], true_h[self.interior_mask])
         
-        # Weight the boundary 100x stronger so the wave is forced to propagate
-        data_loss = loss_data_interior + 100.0 * loss_data_boundary
+        # We heavily weight the boundary condition so the wave is forced into the domain
+        # CRITICAL FIX: We MUST also heavily weight the interior data loss! 
+        # If we don't, the network predicts h=0 (dry bed) in the interior to keep the physics loss at 0.0, 
+        # resulting in a flatline at the bed elevation.
+        data_loss = 100.0 * loss_data_interior + 100.0 * loss_data_boundary
         
         # 2. Evaluate Exact FVM Physics Loss
         phys_loss = self.compute_physics_loss(t_val, dt=1.0)
