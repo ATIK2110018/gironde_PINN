@@ -28,16 +28,22 @@ class HydroPINN(nn.Module):
         
         self.fourier = FourierFeatures(in_features=3, out_features=128, sigma=30.0)
         
+        # Upgrade Architecture to handle complex FVM fluid dynamics (6 layers, 512 width)
+        # We switch to SiLU (Swish) activation which has smoother 2nd derivatives and performs much better in PINNs
         self.net = nn.Sequential(
-            nn.Linear(128, 256),
-            nn.GELU(),
-            nn.Linear(256, 256),
-            nn.GELU(),
-            nn.Linear(256, 256),
-            nn.GELU(),
-            nn.Linear(256, 256),
-            nn.GELU(),
-            nn.Linear(256, 3) # outputs h, u, v
+            nn.Linear(128, 512),
+            nn.SiLU(),
+            nn.Linear(512, 512),
+            nn.SiLU(),
+            nn.Linear(512, 512),
+            nn.SiLU(),
+            nn.Linear(512, 512),
+            nn.SiLU(),
+            nn.Linear(512, 512),
+            nn.SiLU(),
+            nn.Linear(512, 512),
+            nn.SiLU(),
+            nn.Linear(512, 3) # h, u, v
         )
         
     def forward(self, t, coords):
