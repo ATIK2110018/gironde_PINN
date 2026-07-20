@@ -166,6 +166,15 @@ def main():
             epoch_data += d_loss
             epoch_phys += p_loss
             
+        # 2. CRITICAL FIX: Replay Memory
+        # A neural network uses a global weight matrix. If we just march forward in time without 
+        # reminding it of the past, it violently overwrites its weights to fit the current minute, 
+        # completely destroying its memory of all previous hours (Catastrophic Forgetting).
+        if t_idx > 0:
+            past_indices = np.random.choice(range(t_idx), size=min(t_idx, 3), replace=False)
+            for past_idx in past_indices:
+                trainer.train_step(past_idx)
+            
         epoch_data /= 5
         epoch_phys /= 5
         
